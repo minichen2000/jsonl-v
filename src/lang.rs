@@ -333,6 +333,12 @@ impl T {
             _ => format!("Rebuilt messages: {n}"),
         }
     }
+    pub fn context_bytes(&self, size: String) -> String {
+        match self.menu_file {
+            "文件" => format!("估算大小: {size}"),
+            _ => format!("Estimated size: {size}"),
+        }
+    }
     pub fn line_raw_title(&self, n: usize) -> String {
         match self.menu_file {
             "文件" => format!("第 {n} 行原始文本"),

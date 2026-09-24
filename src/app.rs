@@ -108,7 +108,7 @@ pub struct JsonlApp {
     last_row_range: Option<Range<usize>>,
     // 详情
     tab: DetailTab,
-    rebuild_cache: Option<(usize, Vec<CtxItem>, u64)>,
+    rebuild_cache: Option<(usize, Vec<CtxItem>, u64, usize)>,
     // 长文本窗口
     text_windows: Vec<TextViewWindow>,
     next_win_id: usize,
@@ -348,7 +348,7 @@ impl JsonlApp {
             self.scroll_line_into_view(line);
         }
         if self.tab == DetailTab::Rebuild
-            && self.rebuild_cache.as_ref().map(|(l, _, _)| *l) != Some(line)
+            && self.rebuild_cache.as_ref().map(|(l, ..)| *l) != Some(line)
         {
             self.rebuild_cache = None;
         }
@@ -1125,14 +1125,15 @@ impl JsonlApp {
     }
 
     fn show_rebuild(&mut self, ui: &mut Ui, request_line: usize) {
-        if self.rebuild_cache.as_ref().map(|(l, _, _)| l) != Some(&request_line) {
+        if self.rebuild_cache.as_ref().map(|(l, ..)| l) != Some(&request_line) {
             if let Some(doc) = &self.doc {
                 let items = wire::rebuild_context(doc, request_line);
                 let count = wire::estimate_message_count(&items);
-                self.rebuild_cache = Some((request_line, items, count));
+                let bytes = wire::estimate_context_bytes(&items);
+                self.rebuild_cache = Some((request_line, items, count, bytes));
             }
         }
-        let Some((_, items, est)) = &self.rebuild_cache else {
+        let Some((_, items, est, bytes)) = &self.rebuild_cache else {
             return;
         };
         let t = self.t();
@@ -1143,6 +1144,7 @@ impl JsonlApp {
             .map(|e| e.message_count);
         ui.horizontal(|ui| {
             ui.label(t.rebuilt_count(*est));
+            ui.label(t.context_bytes(fmt_bytes(*bytes)));
             if let Some(d) = declared {
                 let ok = d == *est;
                 ui.colored_label(

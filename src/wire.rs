@@ -352,6 +352,22 @@ pub fn estimate_message_count(items: &[CtxItem]) -> u64 {
     count
 }
 
+/// Estimate the byte size of the full request body: system prompt + tools
+/// + every message/thought/tool payload.
+pub fn estimate_context_bytes(items: &[CtxItem]) -> usize {
+    items
+        .iter()
+        .map(|it| match it {
+            CtxItem::SystemPrompt { text, .. } => text.len(),
+            CtxItem::ToolsDef { text, .. } => text.len(),
+            CtxItem::Message { text, .. } => text.len(),
+            CtxItem::Think(s) | CtxItem::Text(s) => s.len(),
+            CtxItem::ToolCall { args, .. } => args.len(),
+            CtxItem::ToolResult { output, .. } => output.len(),
+        })
+        .sum()
+}
+
 fn extract_content_text(message: &Value) -> String {
     match message.get("content") {
         Some(Value::String(s)) => s.clone(),
@@ -510,6 +526,16 @@ mod tests {
         }
         // 二者不计入消息数
         assert_eq!(estimate_message_count(&items), tl[0].message_count);
+    }
+
+    #[test]
+    fn estimate_context_bytes_counts_all_parts() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        let items = rebuild_context(&doc, tl[0].line_idx);
+        let bytes = estimate_context_bytes(&items);
+        // 至少包含系统提示词（约 10KB 量级）
+        assert!(bytes > 1000, "bytes={bytes}");
     }
 
     #[test]
