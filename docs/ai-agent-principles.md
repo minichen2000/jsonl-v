@@ -65,12 +65,41 @@ Kimi Code 把会话中发生的**每一件事**追加为一行 JSON，形成事�
 
 **发给 LLM 的 messages 数组 = 以下记录按序拼接。**
 
-**`context.append_message`** — 一条完整消息落库进上下文。来源看 `message.origin.kind`：
+**`context.append_message`** — 一条完整消息落库进上下文。来源看 `message.origin.kind`
+（实测一个真实会话的分布：user 30 条、injection 34 条、task 9 条）：
 
 - `user`：**用户真正敲的话**
-- `injection`：**Agent 框架自己塞的**——各种 `<system-reminder>`（plan 模式规则、
-  压缩通知等）。不是用户写的也不是 LLM 说的，是宿主注入给 LLM 看的
+- `injection`：**Agent 框架自己塞的**（详见 2.3.1）
+- `task`：**后台任务完成通知**。Agent 跑后台命令（如长时间构建）时，任务结束由宿主
+  以一条 user 角色消息的形式送达，内容包在 `<notification>` 标签里
+  （含 taskId、状态、输出摘要），origin 里带 `taskId`/`status`
 - 压缩摘要：压缩发生后，摘要也以 append_message 形式进上下文
+
+#### 2.3.1 injection（注入消息）详解
+
+注入消息是**宿主框架在对话中途动态插入的、user 角色的消息**，用户看不见
+（终端里不显示），但 LLM 看得见。实测本 session 里的注入内容：
+
+| 注入内容 | 触发时机 | 例 |
+|---|---|---|
+| Plan 模式规则 | 进入/退出 plan 模式时 | "Plan mode is active. You MUST NOT make any edits..." |
+| TodoList 提醒 | 框架发现待办清单久未更新时 | "The TodoList tool has not been updated recently..." |
+| 上下文压缩通知 | 自动压缩发生后 | 告知旧内容已被摘要替代、如何回查原文 |
+| 技能（skill）正文 | LLM 调用 Skill 工具时 | 技能清单在 system prompt 里只有名称和简介；调用后完整操作说明以 `<skill-loaded>` 块注入对话 |
+
+**注入消息与系统提示词（system prompt）的区别**——这是两类完全不同的东西：
+
+| | system prompt（profile.bind） | injection（append_message） |
+|---|---|---|
+| 位置 | 请求体最前面，独立字段 | messages 数组中间，假装成一条 user 消息 |
+| 内容 | 角色设定、行为准则、工具用法、项目目录树 | 临时状态通知：模式切换、提醒、事件 |
+| 变化频率 | 一次会话基本不变（所以能命中缓存） | 随对话进展随时插入 |
+| 日志位置 | `profile.bind` 记一次原文 | 每条一条 `context.append_message` |
+| 谁写的 | Kimi Code 产品方预置 | 宿主框架按当前状态即时生成 |
+
+为什么要分成两层？因为 prompt cache 按前缀命中：system prompt 不变，每次请求都命中
+缓存；而变化频繁的状态提醒放在 messages 尾部追加，不破坏前缀。如果把易变内容塞进
+system prompt，每次变化都会让全量缓存失效，成本大增。
 
 **`context.append_loop_event`** — 一次 LLM 往返中的流式事件，内嵌 `event.type` 子类型：
 
