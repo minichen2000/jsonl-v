@@ -140,6 +140,14 @@ pub fn timeline(doc: &JsonlDocument) -> Vec<RequestEntry> {
 /// One reconstructed context item, in the order it entered the context.
 #[derive(Debug, Clone)]
 pub enum CtxItem {
+    /// profile.bind 里的系统提示词原文（请求体的 system 部分）
+    SystemPrompt { line_idx: usize, text: String },
+    /// llm.tools_snapshot 里的工具定义原文（请求体的 tools 部分）
+    ToolsDef {
+        line_idx: usize,
+        text: String,
+        tool_count: usize,
+    },
     /// context.append_message: a persisted message (user/assistant/injection)
     Message {
         role: String,
@@ -165,11 +173,40 @@ pub enum CtxItem {
 /// records before that line, in order.
 pub fn rebuild_context(doc: &JsonlDocument, request_line: usize) -> Vec<CtxItem> {
     let mut items = Vec::new();
+    let mut system_prompt: Option<CtxItem> = None; // 最新的 profile.bind
+    let mut tools_def: Option<CtxItem> = None; // 最新的 llm.tools_snapshot
     let end = request_line.min(doc.line_count());
     for i in 0..end {
         let raw = doc.raw_line(i);
         let is_msg = raw.contains("\"type\":\"context.append_message\"");
         let is_loop = !is_msg && raw.contains("\"type\":\"context.append_loop_event\"");
+        let is_profile = !is_msg && !is_loop && raw.contains("\"type\":\"profile.bind\"");
+        let is_tools = !is_msg && !is_loop && !is_profile
+            && raw.contains("\"type\":\"llm.tools_snapshot\"");
+        if is_profile {
+            if let Ok(v) = serde_json::from_str::<Value>(raw) {
+                if let Some(sp) = v.get("systemPrompt").and_then(Value::as_str) {
+                    system_prompt = Some(CtxItem::SystemPrompt {
+                        line_idx: i,
+                        text: sp.to_string(),
+                    });
+                }
+            }
+            continue;
+        }
+        if is_tools {
+            if let Ok(v) = serde_json::from_str::<Value>(raw) {
+                if let Some(tools) = v.get("tools").and_then(Value::as_array) {
+                    tools_def = Some(CtxItem::ToolsDef {
+                        line_idx: i,
+                        tool_count: tools.len(),
+                        text: serde_json::to_string_pretty(&Value::Array(tools.clone()))
+                            .unwrap_or_default(),
+                    });
+                }
+            }
+            continue;
+        }
         if !is_msg && !is_loop {
             continue;
         }
@@ -274,7 +311,16 @@ pub fn rebuild_context(doc: &JsonlDocument, request_line: usize) -> Vec<CtxItem>
             }
         }
     }
-    items
+    // system prompt 与工具定义在请求体里位于 messages 之前
+    let mut head = Vec::with_capacity(2);
+    if let Some(sp) = system_prompt {
+        head.push(sp);
+    }
+    if let Some(td) = tools_def {
+        head.push(td);
+    }
+    head.extend(items);
+    head
 }
 
 /// Estimate the message count of a rebuilt context: each Message = 1,
@@ -285,6 +331,8 @@ pub fn estimate_message_count(items: &[CtxItem]) -> u64 {
     let mut in_assistant_run = false;
     for it in items {
         match it {
+            // system prompt / 工具定义不属于 messages 数组，不计数
+            CtxItem::SystemPrompt { .. } | CtxItem::ToolsDef { .. } => {}
             CtxItem::Message { .. } => {
                 count += 1;
                 in_assistant_run = false;
@@ -436,6 +484,32 @@ mod tests {
         for c in &calls {
             assert!(results.contains(c));
         }
+    }
+
+    #[test]
+    fn rebuild_includes_system_prompt_and_tools_head() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        let items = rebuild_context(&doc, tl[0].line_idx);
+        // 前两项应是系统提示词与工具定义（来自样例第 5 行起的 profile.bind / tools_snapshot）
+        match &items[0] {
+            CtxItem::SystemPrompt { line_idx, text } => {
+                assert_eq!(*line_idx, 4); // 第 5 行（1-based）
+                assert!(text.contains("Kimi Code"));
+            }
+            other => panic!("首项应为 SystemPrompt，实际 {other:?}"),
+        }
+        match &items[1] {
+            CtxItem::ToolsDef {
+                tool_count, text, ..
+            } => {
+                assert!(*tool_count > 0);
+                assert!(text.contains("\"name\""));
+            }
+            other => panic!("第二项应为 ToolsDef，实际 {other:?}"),
+        }
+        // 二者不计入消息数
+        assert_eq!(estimate_message_count(&items), tl[0].message_count);
     }
 
     #[test]

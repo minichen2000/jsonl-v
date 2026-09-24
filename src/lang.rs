@@ -65,6 +65,8 @@ pub struct T {
     // 重建上下文
     pub think_label: &'static str,
     pub text_label: &'static str,
+    pub sys_prompt_label: &'static str,
+    pub jump_to_source: &'static str,
     // 文本查看窗口
     pub wrap_toggle: &'static str,
     pub copy_all: &'static str,
@@ -124,6 +126,8 @@ const ZH: T = T {
     no_file: "未打开文件",
     think_label: "💭 think",
     text_label: "📝 text",
+    sys_prompt_label: "🧾 系统提示词",
+    jump_to_source: "跳转到源行",
     wrap_toggle: "自动换行",
     copy_all: "复制全部",
     about_title: "ℹ 关于 jsonl-v",
@@ -179,6 +183,8 @@ const EN: T = T {
     no_file: "No file opened",
     think_label: "💭 think",
     text_label: "📝 text",
+    sys_prompt_label: "🧾 System Prompt",
+    jump_to_source: "Jump to source line",
     wrap_toggle: "Word wrap",
     copy_all: "Copy all",
     about_title: "ℹ About jsonl-v",
@@ -355,6 +361,24 @@ impl T {
         match self.menu_file {
             "文件" => " [注入]",
             _ => " [injected]",
+        }
+    }
+    pub fn tools_def_label(&self, n: usize) -> String {
+        match self.menu_file {
+            "文件" => format!("🛠 工具定义（{n} 个工具）"),
+            _ => format!("🛠 Tool Definitions ({n} tools)"),
+        }
+    }
+    pub fn sys_prompt_title(&self, line: usize) -> String {
+        match self.menu_file {
+            "文件" => format!("系统提示词（源: 第 {line} 行 profile.bind）"),
+            _ => format!("System Prompt (source: line {line} profile.bind)"),
+        }
+    }
+    pub fn tools_def_title(&self, line: usize) -> String {
+        match self.menu_file {
+            "文件" => format!("工具定义（源: 第 {line} 行 llm.tools_snapshot）"),
+            _ => format!("Tool Definitions (source: line {line} llm.tools_snapshot)"),
         }
     }
     pub fn text_stats(&self, lines: usize, chars: usize) -> String {

@@ -1154,10 +1154,55 @@ impl JsonlApp {
         ui.separator();
         let fs = self.fs_list();
         let mut pending_open: Option<(String, String)> = None;
+        let mut pending_jump: Option<usize> = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             let mut msg_no = 0usize;
             for item in items {
                 match item {
+                    CtxItem::SystemPrompt { line_idx, text } => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(t.sys_prompt_label).color(KIND_USAGE).strong(),
+                            );
+                            if ui.small_button(t.jump_to_source).clicked() {
+                                pending_jump = Some(*line_idx);
+                            }
+                        });
+                        if let Some(a) = text_with_view_button(
+                            ui,
+                            text,
+                            &t.sys_prompt_title(line_idx + 1),
+                            fs,
+                            t,
+                        ) {
+                            pending_open = Some(a);
+                        }
+                    }
+                    CtxItem::ToolsDef {
+                        line_idx,
+                        text,
+                        tool_count,
+                    } => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(t.tools_def_label(*tool_count))
+                                    .color(KIND_USAGE)
+                                    .strong(),
+                            );
+                            if ui.small_button(t.jump_to_source).clicked() {
+                                pending_jump = Some(*line_idx);
+                            }
+                        });
+                        if let Some(a) = text_with_view_button(
+                            ui,
+                            text,
+                            &t.tools_def_title(line_idx + 1),
+                            fs,
+                            t,
+                        ) {
+                            pending_open = Some(a);
+                        }
+                    }
                     CtxItem::Message { role, text, origin } => {
                         msg_no += 1;
                         let color = match role.as_str() {
@@ -1253,6 +1298,9 @@ impl JsonlApp {
         });
         if let Some((title, content)) = pending_open {
             self.open_text_window(title, content);
+        }
+        if let Some(line) = pending_jump {
+            self.select_line(line, true);
         }
     }
 
