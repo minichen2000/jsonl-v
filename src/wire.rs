@@ -323,6 +323,78 @@ pub fn rebuild_context(doc: &JsonlDocument, request_line: usize) -> Vec<CtxItem>
     head
 }
 
+/// Build the full request body (OpenAI chat-completions style) for the
+/// llm.request at `request_line`: model / max_tokens from the request record,
+/// messages rebuilt from context events, tools from the tools snapshot.
+pub fn build_request_body(doc: &JsonlDocument, request_line: usize) -> Option<Value> {
+    let raw = doc.raw_line(request_line);
+    if !raw.contains("\"type\":\"llm.request\"") {
+        return None;
+    }
+    let req: Value = serde_json::from_str(raw).ok()?;
+    let items = rebuild_context(doc, request_line);
+
+    let mut messages: Vec<Value> = Vec::new();
+    let mut tools: Option<Value> = None;
+    // 连续的 Think/Text/ToolCall 累积为一条 assistant 消息
+    let mut parts: Vec<Value> = Vec::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+    macro_rules! flush_assistant {
+        () => {
+            if !parts.is_empty() || !tool_calls.is_empty() {
+                let mut m =
+                    serde_json::json!({"role": "assistant", "content": std::mem::take(&mut parts)});
+                if !tool_calls.is_empty() {
+                    m["tool_calls"] = Value::Array(std::mem::take(&mut tool_calls));
+                }
+                messages.push(m);
+            }
+        };
+    }
+    for item in items {
+        match item {
+            CtxItem::SystemPrompt { text, .. } => {
+                messages.push(serde_json::json!({"role": "system", "content": text}));
+            }
+            CtxItem::ToolsDef { text, .. } => {
+                tools = serde_json::from_str(&text).ok();
+            }
+            CtxItem::Message { role, text, .. } => {
+                flush_assistant!();
+                messages.push(serde_json::json!({"role": role, "content": text}));
+            }
+            CtxItem::Think(t) => parts.push(serde_json::json!({"type": "think", "think": t})),
+            CtxItem::Text(t) => parts.push(serde_json::json!({"type": "text", "text": t})),
+            CtxItem::ToolCall { id, name, args } => {
+                tool_calls.push(serde_json::json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                }));
+            }
+            CtxItem::ToolResult { id, output } => {
+                flush_assistant!();
+                messages.push(
+                    serde_json::json!({"role": "tool", "tool_call_id": id, "content": output}),
+                );
+            }
+        }
+    }
+    flush_assistant!();
+
+    let mut body = serde_json::Map::new();
+    body.insert("model".into(), req.get("model").cloned().unwrap_or(Value::Null));
+    body.insert(
+        "max_tokens".into(),
+        req.get("maxTokens").cloned().unwrap_or(Value::Null),
+    );
+    body.insert("messages".into(), Value::Array(messages));
+    if let Some(t) = tools {
+        body.insert("tools".into(), t);
+    }
+    Some(Value::Object(body))
+}
+
 /// Estimate the message count of a rebuilt context: each Message = 1,
 /// a consecutive run of Think/Text/ToolCall = 1 assistant message,
 /// each ToolResult = 1. Should equal llm.request.messageCount.
@@ -536,6 +608,66 @@ mod tests {
         let bytes = estimate_context_bytes(&items);
         // 至少包含系统提示词（约 10KB 量级）
         assert!(bytes > 1000, "bytes={bytes}");
+    }
+
+    #[test]
+    fn request_body_message_count_matches_for_all_requests() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        for e in &tl {
+            let body = build_request_body(&doc, e.line_idx).expect("build_request_body");
+            let messages = body["messages"].as_array().expect("messages array");
+            // system 消息（messages[0]）不计入 messageCount
+            assert_eq!(
+                messages.len() as u64,
+                e.message_count + 1,
+                "turnStep {} 请求体消息数应为 messageCount + 1（system）",
+                e.turn_step
+            );
+        }
+    }
+
+    #[test]
+    fn request_body_structure_first_request() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        let body = build_request_body(&doc, tl[0].line_idx).expect("build_request_body");
+        assert_eq!(body["model"].as_str(), Some("k3-256k"));
+        assert_eq!(body["max_tokens"].as_u64(), Some(262144));
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"].as_str(), Some("system"));
+        assert!(messages[0]["content"].as_str().unwrap().contains("Kimi Code"));
+        let tools = body["tools"].as_array().expect("tools array");
+        assert!(!tools.is_empty());
+    }
+
+    #[test]
+    fn request_body_tool_results_pair_with_tool_calls() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        // 0.7 之前应已有若干工具调用与结果
+        let body = build_request_body(&doc, tl[6].line_idx).expect("build_request_body");
+        let messages = body["messages"].as_array().unwrap();
+        let mut call_ids: Vec<&str> = Vec::new();
+        let mut result_ids: Vec<&str> = Vec::new();
+        for m in messages {
+            match m["role"].as_str() {
+                Some("assistant") => {
+                    if let Some(calls) = m["tool_calls"].as_array() {
+                        call_ids.extend(calls.iter().filter_map(|c| c["id"].as_str()));
+                    }
+                }
+                Some("tool") => {
+                    result_ids.push(m["tool_call_id"].as_str().expect("tool_call_id"));
+                }
+                _ => {}
+            }
+        }
+        assert!(!call_ids.is_empty());
+        assert_eq!(call_ids.len(), result_ids.len());
+        for r in &result_ids {
+            assert!(call_ids.contains(r), "tool_call_id {r} 无配对");
+        }
     }
 
     #[test]

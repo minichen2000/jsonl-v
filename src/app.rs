@@ -6,6 +6,7 @@ use egui::{Align2, Color32, Context, FontFamily, FontId, Key, Modifiers, RichTex
 
 use crate::document::JsonlDocument;
 use crate::json_tree::{self, TreeAction};
+use crate::json_view::JsonViewWindow;
 use crate::lang::{self, Lang, T};
 use crate::search::{Query, SearchHandle, SearchMsg};
 use crate::settings::Settings;
@@ -111,6 +112,8 @@ pub struct JsonlApp {
     rebuild_cache: Option<(usize, Vec<CtxItem>, u64, usize)>,
     // 长文本窗口
     text_windows: Vec<TextViewWindow>,
+    // 结构化 JSON 窗口（请求体重建）
+    json_windows: Vec<JsonViewWindow>,
     next_win_id: usize,
     // 设置与弹窗
     settings: Settings,
@@ -151,6 +154,7 @@ impl JsonlApp {
             tab: DetailTab::Tree,
             rebuild_cache: None,
             text_windows: Vec::new(),
+            json_windows: Vec::new(),
             next_win_id: 0,
             settings: Settings::load(),
             applied_font_size: None,
@@ -561,16 +565,22 @@ impl JsonlApp {
                         if recent.is_empty() {
                             ui.label(RichText::new(t.recent_empty).color(Color32::GRAY));
                         }
+                        // 一行一路径不换行；超宽时省略前部（保留文件名），用满可用宽度
+                        let max_w = ui.ctx().screen_rect().width() - 60.0;
+                        let font_id = egui::TextStyle::Button.resolve(ui.style());
                         for p in &recent {
-                            let name = p
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| p.display().to_string());
-                            if ui
-                                .button(name)
-                                .on_hover_text(p.display().to_string())
-                                .clicked()
-                            {
+                            let full = p.display().to_string();
+                            let label = fit_path_front(ui, &full, max_w, font_id.clone());
+                            let truncated = label != full;
+                            // 菜单 Ui 默认 wrap_mode=Wrap，必须显式 Extend 才不换行
+                            let btn = egui::Button::new(label)
+                                .wrap_mode(egui::TextWrapMode::Extend);
+                            let resp = if truncated {
+                                ui.add(btn).on_hover_text(&full)
+                            } else {
+                                ui.add(btn)
+                            };
+                            if resp.clicked() {
                                 ui.close_menu();
                                 self.open_path(p.clone());
                             }
@@ -1141,6 +1151,7 @@ impl JsonlApp {
             .iter()
             .find(|e| e.line_idx == request_line)
             .map(|e| e.message_count);
+        let mut pending_json = false;
         ui.horizontal(|ui| {
             ui.label(t.rebuilt_count(*est));
             ui.label(t.context_bytes(fmt_bytes(*bytes)));
@@ -1150,6 +1161,10 @@ impl JsonlApp {
                     if ok { KIND_TOOL_RESULT } else { BAD_LINE },
                     format!("llm.request.messageCount = {d} {}", if ok { "✓" } else { "✗" }),
                 );
+            }
+            ui.separator();
+            if ui.small_button(t.request_json_btn).clicked() {
+                pending_json = true;
             }
         });
         ui.separator();
@@ -1302,6 +1317,27 @@ impl JsonlApp {
         if let Some((title, content)) = pending_open {
             self.open_text_window(title, content);
         }
+        if pending_json {
+            let body = self
+                .doc
+                .as_ref()
+                .and_then(|doc| wire::build_request_body(doc, request_line));
+            match body {
+                Some(body) => {
+                    let step = self
+                        .timeline
+                        .iter()
+                        .find(|e| e.line_idx == request_line)
+                        .map(|e| e.turn_step.clone())
+                        .unwrap_or_default();
+                    let title = t.request_json_title(request_line + 1, &step);
+                    let id = self.next_win_id;
+                    self.next_win_id += 1;
+                    self.json_windows.push(JsonViewWindow::new(id, title, body));
+                }
+                None => self.status = t.request_json_failed.into(),
+            }
+        }
         if let Some(line) = pending_jump {
             self.select_line(line, true);
         }
@@ -1389,6 +1425,18 @@ impl eframe::App for JsonlApp {
         }
         self.text_windows.retain(|w| w.open);
 
+        // 结构化 JSON 窗口（请求体重建）；树内长字符串可再开纯文本窗口
+        let mut pending_text: Option<(String, String)> = None;
+        for w in &mut self.json_windows {
+            if let Some(TreeAction::OpenText { title, content }) = w.show(ctx, fs, t) {
+                pending_text = Some((title, content));
+            }
+        }
+        self.json_windows.retain(|w| w.open);
+        if let Some((title, content)) = pending_text {
+            self.open_text_window(title, content);
+        }
+
         // 搜索进行时持续重绘
         if self.search_handle.is_some() || self.last_edit.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -1464,7 +1512,7 @@ fn fit_text_tail(ui: &Ui, text: &str, style: egui::TextStyle) -> String {
     })
 }
 
-fn fmt_bytes(n: usize) -> String {
+pub fn fmt_bytes(n: usize) -> String {
     if n >= 1024 * 1024 {
         format!("{:.1}MB", n as f64 / 1024.0 / 1024.0)
     } else if n >= 1024 {
@@ -1472,6 +1520,31 @@ fn fmt_bytes(n: usize) -> String {
     } else {
         format!("{n}B")
     }
+}
+
+/// 路径超宽时省略前部为「…」，保留文件名所在的尾部，宽度用满 max_w。
+fn fit_path_front(ui: &Ui, path: &str, max_w: f32, font_id: FontId) -> String {
+    let width = |s: &str| {
+        ui.fonts(|f| f.layout_no_wrap(s.to_string(), font_id.clone(), Color32::WHITE).rect.width())
+    };
+    if width(path) <= max_w {
+        return path.to_string();
+    }
+    // 二分：找能放下的最长尾部（连同前缀「…」）
+    let chars: Vec<char> = path.chars().collect();
+    let n = chars.len();
+    let mut lo = 0usize; // 已知放不下
+    let mut hi = n; // 已知能放下（空串 + …）
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        let s: String = chars[n - mid..].iter().collect();
+        if width(&format!("…{s}")) <= max_w {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    format!("…{}", chars[n - hi..].iter().collect::<String>())
 }
 
 fn short_id(id: &str) -> String {

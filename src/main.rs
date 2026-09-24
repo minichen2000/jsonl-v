@@ -4,6 +4,7 @@ mod app;
 mod document;
 mod icon;
 mod json_tree;
+mod json_view;
 mod lang;
 mod search;
 mod settings;

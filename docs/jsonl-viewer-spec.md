@@ -199,7 +199,8 @@ pub struct LineInfo {
 1. **事件着色**：llm.request=黄、tool.call=蓝、tool.result=绿、content.part(think)=紫、content.part(text)=灰、usage.record=青、interaction.*=橙、错误/坏行=红。
 2. **请求时间线面板**（可折叠，置于行列表上方）：列出全部 `llm.request`，每项显示 `#序号 turnStep messageCount`，点击跳转到对应行。
 3. **上下文重建**：选中某个 `llm.request` 行时，详情面板多一个「重建上下文」Tab——向前扫描收集 `context.append_message` 和 `context.append_loop_event`，按消息序列渲染（role 标签 + 内容 + 工具调用配对），近似还原该次请求实际发送的 messages 数组。tool.call / tool.result 按 `toolCallId` 配对缩进显示。
-4. **usage 小结**：时间线每项旁显示紧随的 `usage.record` 的 input/output/cacheRead token 数。
+4. **请求体 JSON 查看**：「重建上下文」Tab 工具行有「📦 请求体 JSON」按钮——把重建结果组装成 OpenAI Chat Completions 风格的完整请求体（`model`/`max_tokens` 取自该 `llm.request` 行；`messages[0]` 为 system 提示词，连续的 think/text/tool.call 合并为一条 assistant 消息，tool.result 为带 `tool_call_id` 的 tool 消息；`tools` 取自最新 `llm.tools_snapshot`），在独立大窗口（900×700）中以可折叠 JSON 树展示，支持全展开/全折叠、复制全部、树内长字符串再开纯文本窗口。
+5. **usage 小结**：时间线每项旁显示紧随的 `usage.record` 的 input/output/cacheRead token 数。
 
 **search.rs**
 

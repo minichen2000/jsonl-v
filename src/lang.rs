@@ -67,6 +67,8 @@ pub struct T {
     pub text_label: &'static str,
     pub sys_prompt_label: &'static str,
     pub jump_to_source: &'static str,
+    pub request_json_btn: &'static str,
+    pub request_json_failed: &'static str,
     // 文本查看窗口
     pub wrap_toggle: &'static str,
     pub copy_all: &'static str,
@@ -128,6 +130,8 @@ const ZH: T = T {
     text_label: "📝 text",
     sys_prompt_label: "🧾 系统提示词",
     jump_to_source: "跳转到源行",
+    request_json_btn: "📦 请求体 JSON",
+    request_json_failed: "请求体重建失败",
     wrap_toggle: "自动换行",
     copy_all: "复制全部",
     about_title: "ℹ 关于 jsonl-v",
@@ -185,6 +189,8 @@ const EN: T = T {
     text_label: "📝 text",
     sys_prompt_label: "🧾 System Prompt",
     jump_to_source: "Jump to source line",
+    request_json_btn: "📦 Request Body JSON",
+    request_json_failed: "Failed to rebuild request body",
     wrap_toggle: "Word wrap",
     copy_all: "Copy all",
     about_title: "ℹ About jsonl-v",
@@ -391,6 +397,18 @@ impl T {
         match self.menu_file {
             "文件" => format!("{lines} 行 | {chars} 字符"),
             _ => format!("{lines} lines | {chars} chars"),
+        }
+    }
+    pub fn request_json_title(&self, line: usize, turn_step: &str) -> String {
+        match self.menu_file {
+            "文件" => format!("L{line} 请求体 (turnStep {turn_step})"),
+            _ => format!("L{line} request body (turnStep {turn_step})"),
+        }
+    }
+    pub fn json_view_size(&self, size: String) -> String {
+        match self.menu_file {
+            "文件" => format!("约 {size}"),
+            _ => format!("~{size}"),
         }
     }
     pub fn n_items(&self, n: usize) -> String {
