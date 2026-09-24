@@ -727,10 +727,9 @@ impl JsonlApp {
                 }
 
                 if let Some(doc) = &self.doc {
-                    // 右侧剩余宽度可能很窄：按宽度截断路径，保留末尾，避免与左侧控件重叠
-                    let avail = ui.available_width();
+                    // 右侧剩余宽度可能很窄：放不下时砍头部留尾部，避免与左侧控件重叠
                     let path = doc.path.display().to_string();
-                    let shown = fit_text_tail(&path, avail, self.settings.font_size);
+                    let shown = fit_text_tail(ui, &path, egui::TextStyle::Body);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(RichText::new(shown).color(Color32::GRAY));
                     });
@@ -1337,8 +1336,7 @@ impl JsonlApp {
                 } else {
                     ui.label(t.no_file);
                 }
-                let avail = ui.available_width();
-                let status = fit_text_tail(&self.status, avail, self.settings.font_size);
+                let status = fit_text_tail(ui, &self.status, egui::TextStyle::Small);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(RichText::new(status).color(Color32::GRAY).small());
                 });
@@ -1433,19 +1431,37 @@ fn text_with_view_button(
     }
 }
 
-/// 把文本截到可用宽度内：放不下时砍掉开头、保留结尾（适合路径），前面加省略号。
-/// 宽度按最宽的 CJK 字符（≈font_size）估算，保守不溢出。
-fn fit_text_tail(text: &str, avail: f32, font_size: f32) -> String {
-    let max_chars = ((avail - 8.0) / font_size).max(0.0) as usize;
-    let n = text.chars().count();
-    if n <= max_chars {
-        return text.to_string();
-    }
-    if max_chars < 2 {
-        return "…".to_string();
-    }
-    let tail: String = text.chars().skip(n + 1 - max_chars).collect();
-    format!("…{tail}")
+/// 路径等长文本放不下时砍头部、留尾部（加省略号）。
+/// 用字体引擎真实测量宽度，既不溢出也不浪费空间。
+fn fit_text_tail(ui: &Ui, text: &str, style: egui::TextStyle) -> String {
+    let avail = ui.available_width() - 4.0;
+    let font = style.resolve(ui.style());
+    ui.fonts(|f| {
+        let fits = |s: String| {
+            f.layout_no_wrap(s, font.clone(), Color32::WHITE).size().x <= avail
+        };
+        if fits(text.to_string()) {
+            return text.to_string();
+        }
+        if avail <= 0.0 {
+            return String::new();
+        }
+        // 二分找最小砍头量：砍得越多越窄，fits 关于 skip 单调
+        let n = text.chars().count();
+        let cut = |skip: usize| -> String {
+            std::iter::once('…').chain(text.chars().skip(skip)).collect()
+        };
+        let (mut lo, mut hi) = (1usize, n);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if fits(cut(mid)) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        cut(lo)
+    })
 }
 
 fn fmt_bytes(n: usize) -> String {
