@@ -1,7 +1,10 @@
-# jsonl-v 使用说明书
+# jsonl-v
 
 一个 JSONL（每行一个 JSON）文件查看器，对 Kimi Code 的 `wire.jsonl` 会话日志有增强展示。
 单文件 exe，双击即用，不写注册表（除非你主动开启右键菜单）。
+
+- **使用说明**：见下文
+- **构建说明**：见 [BUILDING.md](BUILDING.md)
 
 ## 打开文件
 

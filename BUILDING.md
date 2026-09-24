@@ -72,15 +72,15 @@ macOS / Linux 上同一份代码可直接 `cargo build --release`：
 ```
 jsonl-v/
 ├── Cargo.toml
+├── README.md           # 使用说明
+├── BUILDING.md         # 本文档
 ├── build.rs              # 仅 Windows：内嵌 exe 图标
 ├── assets/
 │   ├── icon.rc           # 资源脚本
 │   └── icon.ico          # 由 examples/make_icon.rs 生成
 ├── docs/
 │   ├── jsonl-viewer-spec.md  # 原始开发规格
-│   ├── wire.jsonl            # 测试样例
-│   ├── build.md              # 本文档
-│   └── usage.md              # 使用说明
+│   └── wire.jsonl            # 测试样例
 ├── examples/make_icon.rs # 图标生成器
 └── src/
     ├── main.rs           # 入口：窗口、图标、中文字体加载
