@@ -1080,7 +1080,7 @@ impl JsonlApp {
                         let mut action = None;
                         let default_open = self.tree_default_open;
                         let gen = self.tree_gen;
-                        egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                             action = json_tree::show_value_tree(
                                 ui,
                                 v,
@@ -1104,7 +1104,7 @@ impl JsonlApp {
                         Ok(v) => serde_json::to_string_pretty(v).unwrap_or_else(|_| raw.clone()),
                         Err(_) => raw.clone(),
                     };
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         ui.add(
                             egui::Label::new(
                                 RichText::new(text).font(FontId::new(fs, FontFamily::Monospace)),
@@ -1114,7 +1114,7 @@ impl JsonlApp {
                     });
                 }
                 DetailTab::Raw => {
-                    egui::ScrollArea::both().show(ui, |ui| {
+                    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                         ui.label(RichText::new(raw.as_str()).font(FontId::new(fs, FontFamily::Monospace)));
                     });
                 }
@@ -1160,7 +1160,9 @@ impl JsonlApp {
         let fs = self.fs_list();
         let mut pending_open: Option<(String, String)> = None;
         let mut pending_jump: Option<usize> = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
             let mut msg_no = 0usize;
             for item in items {
                 match item {
