@@ -64,9 +64,21 @@ fn scalar_ui(
             ui.label(mono(k, font_size).color(KEY_COLOR));
             ui.label(mono(":", font_size));
         }
-        ui.label(mono(value_text, font_size).color(color));
+        let show_btn = string_content.is_some_and(text_view::is_long_text);
+        let mut shown = value_text;
+        if show_btn {
+            // 长字符串：按可用宽度截断显示值，保证「纯文本查看」按钮不被挤出可视区
+            let reserve = font_size * 10.0; // 按钮约占宽度
+            let avail = (ui.available_width() - reserve).max(font_size * 8.0);
+            let max_chars = (avail / font_size) as usize;
+            if shown.chars().count() > max_chars {
+                let cut: String = shown.chars().take(max_chars.saturating_sub(2)).collect();
+                shown = format!("{cut}…\"");
+            }
+        }
+        ui.label(mono(shown, font_size).color(color));
         if let Some(s) = string_content {
-            if text_view::is_long_text(s) && ui.small_button(t.view_text_btn).clicked() {
+            if show_btn && ui.small_button(t.view_text_btn).clicked() {
                 *action = Some(TreeAction::OpenText {
                     title: path.to_string(),
                     content: s.to_string(),

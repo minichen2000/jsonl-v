@@ -1404,7 +1404,11 @@ fn text_with_view_button(
     if is_long_text(text) {
         let mut open = None;
         ui.horizontal(|ui| {
-            let preview: String = text.chars().take(160).collect();
+            // 按可用宽度截断预览，保证按钮在小窗口下也可见可点
+            let reserve = font_size * 10.0; // 按钮约占宽度
+            let avail = (ui.available_width() - reserve).max(font_size * 8.0);
+            let max_chars = ((avail / font_size) as usize).min(160);
+            let preview: String = text.chars().take(max_chars).collect();
             ui.label(
                 RichText::new(format!("{}…", preview.replace('\n', "\\n")))
                     .font(FontId::new(font_size - 1.0, FontFamily::Monospace))
