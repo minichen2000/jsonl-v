@@ -727,12 +727,12 @@ impl JsonlApp {
                 }
 
                 if let Some(doc) = &self.doc {
+                    // 右侧剩余宽度可能很窄：按宽度截断路径，保留末尾，避免与左侧控件重叠
+                    let avail = ui.available_width();
+                    let path = doc.path.display().to_string();
+                    let shown = fit_text_tail(&path, avail, self.settings.font_size);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(doc.path.display().to_string())
-                                .color(Color32::GRAY)
-                                .small(),
-                        );
+                        ui.label(RichText::new(shown).color(Color32::GRAY));
                     });
                 }
             });
@@ -1046,10 +1046,7 @@ impl JsonlApp {
             let fs = self.fs_detail();
 
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(t.line_label(line_no))
-                        .font(FontId::new(fs + 1.0, FontFamily::Monospace)),
-                );
+                ui.label(t.line_label(line_no));
                 ui.separator();
                 ui.selectable_value(&mut self.tab, DetailTab::Tree, t.tab_tree);
                 ui.selectable_value(&mut self.tab, DetailTab::Pretty, t.tab_pretty);
@@ -1340,8 +1337,10 @@ impl JsonlApp {
                 } else {
                     ui.label(t.no_file);
                 }
+                let avail = ui.available_width();
+                let status = fit_text_tail(&self.status, avail, self.settings.font_size);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(&self.status).color(Color32::GRAY).small());
+                    ui.label(RichText::new(status).color(Color32::GRAY).small());
                 });
             });
         });
@@ -1432,6 +1431,21 @@ fn text_with_view_button(
     } else {
         None
     }
+}
+
+/// 把文本截到可用宽度内：放不下时砍掉开头、保留结尾（适合路径），前面加省略号。
+/// 宽度按最宽的 CJK 字符（≈font_size）估算，保守不溢出。
+fn fit_text_tail(text: &str, avail: f32, font_size: f32) -> String {
+    let max_chars = ((avail - 8.0) / font_size).max(0.0) as usize;
+    let n = text.chars().count();
+    if n <= max_chars {
+        return text.to_string();
+    }
+    if max_chars < 2 {
+        return "…".to_string();
+    }
+    let tail: String = text.chars().skip(n + 1 - max_chars).collect();
+    format!("…{tail}")
 }
 
 fn fmt_bytes(n: usize) -> String {
