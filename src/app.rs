@@ -863,7 +863,10 @@ impl JsonlApp {
                 let mut row_action = None;
                 let mut scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
                 if let Some(row) = self.pending_scroll_row.take() {
-                    scroll = scroll.vertical_scroll_offset(row as f32 * row_h);
+                    // 行距 = 行高 + item_spacing.y，与 show_rows 内部计算保持一致，
+                    // 否则大行号时偏移量越差越多，目标行停在视口之外
+                    let stride = row_h + ui.spacing().item_spacing.y;
+                    scroll = scroll.vertical_scroll_offset(row as f32 * stride);
                 }
                 let inner = scroll.show_rows(ui, row_h, n_rows, |ui, range| {
                     self.last_row_range = Some(range.clone());
