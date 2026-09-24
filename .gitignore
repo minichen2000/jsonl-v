@@ -1,0 +1,18 @@
+# Rust 构建产物
+/target
+
+# JetBrains 系 IDE（IntelliJ / RustRover / CLion 等）
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code
+.vscode/
+
+# 操作系统
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Cargo.lock：二进制项目按惯例提交，不忽略
