@@ -800,7 +800,7 @@ impl JsonlApp {
     fn line_list_panel(&mut self, ctx: &Context) {
         let t = self.t();
         egui::SidePanel::left("lines")
-            .default_width(400.0)
+            .default_width(480.0)
             .resizable(true)
             .show(ctx, |ui| {
                 if self.is_wire && !self.timeline.is_empty() {
