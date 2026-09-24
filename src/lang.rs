@@ -62,7 +62,7 @@ pub struct T {
     pub view_text_btn: &'static str,
     // 状态栏
     pub no_file: &'static str,
-    // 重建上下文
+    // 完整上下文（还原）
     pub think_label: &'static str,
     pub text_label: &'static str,
     pub sys_prompt_label: &'static str,
@@ -117,7 +117,7 @@ const ZH: T = T {
     tab_tree: "🌲 树视图",
     tab_pretty: "✨ 美化文本",
     tab_raw: "📄 原始行",
-    tab_rebuild: "🧩 重建上下文",
+    tab_rebuild: "🧩 完整上下文（还原）",
     expand_all: "全展开",
     collapse_all: "全折叠",
     json_parse_failed: "JSON 解析失败",
@@ -174,7 +174,7 @@ const EN: T = T {
     tab_tree: "🌲 Tree",
     tab_pretty: "✨ Pretty",
     tab_raw: "📄 Raw",
-    tab_rebuild: "🧩 Rebuild Context",
+    tab_rebuild: "🧩 Full Context (Rebuilt)",
     expand_all: "Expand all",
     collapse_all: "Collapse all",
     json_parse_failed: "JSON parse failed",
@@ -329,7 +329,7 @@ impl T {
     }
     pub fn rebuilt_count(&self, n: u64) -> String {
         match self.menu_file {
-            "文件" => format!("重建消息数: {n}"),
+            "文件" => format!("还原消息数: {n}"),
             _ => format!("Rebuilt messages: {n}"),
         }
     }
