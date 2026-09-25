@@ -77,6 +77,7 @@ pub struct T {
     pub about_title: &'static str,
     pub about_desc: &'static str,
     pub about_tech: &'static str,
+    pub about_license: &'static str,
     pub about_config: &'static str,
     pub shortcuts_title: &'static str,
     // 快捷键说明
@@ -139,6 +140,7 @@ const ZH: T = T {
     about_title: "ℹ 关于 jsonl-v",
     about_desc: "JSONL 文件查看器，对 Kimi Code wire.jsonl 会话日志增强展示。",
     about_tech: "单文件 exe · Rust + egui",
+    about_license: "© 2025 minichen2000 · MIT License",
     about_config: "配置文件",
     shortcuts_title: "⌨ 快捷键",
     sc_open: "打开文件",
@@ -199,6 +201,7 @@ const EN: T = T {
     about_title: "ℹ About jsonl-v",
     about_desc: "A JSONL file viewer with enhanced support for Kimi Code wire.jsonl session logs.",
     about_tech: "Single-file exe · Rust + egui",
+    about_license: "© 2025 minichen2000 · MIT License",
     about_config: "Config file",
     shortcuts_title: "⌨ Shortcuts",
     sc_open: "Open file",

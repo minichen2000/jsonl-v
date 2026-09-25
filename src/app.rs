@@ -786,9 +786,10 @@ impl JsonlApp {
                 .open(&mut open)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(RichText::new("jsonl-v 0.1.0").strong());
+                    ui.label(RichText::new(format!("jsonl-v {}", env!("CARGO_PKG_VERSION"))).strong());
                     ui.label(t.about_desc);
                     ui.label(t.about_tech);
+                    ui.label(t.about_license);
                     ui.separator();
                     ui.label(
                         RichText::new(format!(
