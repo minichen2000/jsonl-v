@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "jsonl-v"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "eframe",
  "egui",
