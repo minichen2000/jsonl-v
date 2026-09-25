@@ -9,7 +9,6 @@ mod platform {
     use std::process::Command;
 
     const KEY_PATH: &str = r"HKCU\Software\Classes\*\shell\jsonl-v";
-    const DISPLAY_NAME: &str = "用 jsonl-v 打开";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     fn reg_cmd() -> Command {
@@ -26,10 +25,10 @@ mod platform {
             .unwrap_or(false)
     }
 
-    pub fn register() -> Result<(), String> {
+    pub fn register(display_name: &str) -> Result<(), String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe = exe.display().to_string();
-        run(reg_add(KEY_PATH, None, DISPLAY_NAME))?;
+        run(reg_add(KEY_PATH, None, display_name))?;
         run(reg_add(KEY_PATH, Some("Icon"), &exe))?;
         let command_key = format!(r"{KEY_PATH}\command");
         run(reg_add(&command_key, None, &format!("\"{exe}\" \"%1\"")))?;
@@ -85,12 +84,12 @@ mod platform {
         false
     }
 
-    pub fn register() -> Result<(), String> {
-        Err("仅 Windows 支持资源管理器右键菜单注册".into())
+    pub fn register(_display_name: &str) -> Result<(), String> {
+        Err("Explorer context menu registration is only supported on Windows".into())
     }
 
     pub fn unregister() -> Result<(), String> {
-        Err("仅 Windows 支持资源管理器右键菜单注册".into())
+        Err("Explorer context menu registration is only supported on Windows".into())
     }
 }
 

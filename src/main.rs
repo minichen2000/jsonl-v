@@ -71,5 +71,5 @@ fn load_cjk_font(ctx: &egui::Context) {
         ctx.set_fonts(fonts);
         return;
     }
-    eprintln!("jsonl-v: 未找到系统中文字体，CJK 字符可能显示为方框");
+    eprintln!("jsonl-v: no system CJK font found; CJK characters may render as boxes");
 }

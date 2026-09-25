@@ -1,88 +1,95 @@
 # jsonl-v
 
-一个 JSONL（每行一个 JSON）文件查看器，对 Kimi Code 的 `wire.jsonl` 会话日志有增强展示。
-单文件 exe，双击即用，不写注册表（除非你主动开启右键菜单）。
+English | [简体中文](README.zh-CN.md)
 
-- **使用说明**：见下文
-- **构建说明**：见 [BUILDING.md](BUILDING.md)
+A JSONL (one JSON object per line) file viewer with enhanced rendering for Kimi Code `wire.jsonl` session logs.
+A single-file exe: double-click and go, no registry writes (unless you explicitly enable the context menu).
 
-## 打开文件
+- **User guide**: below
+- **Build guide**: see [BUILDING.md](BUILDING.md)
 
-四种方式任选：
-- 把文件**拖进窗口**
-- 菜单「文件 → 打开文件」（快捷键 `Ctrl+O`）
-- 命令行带参数：`jsonl-v.exe path\to\file.jsonl`
-- 在资源管理器右键文件 →「用 jsonl-v 打开」（需先在「设置」里注册一次）
+## Opening files
 
-「文件 → 最近的文件」保存最近打开的 10 个文件。
+Pick any of the four:
+- **Drag a file into the window**
+- Menu "File → Open File" (shortcut `Ctrl+O`)
+- Command line argument: `jsonl-v.exe path\to\file.jsonl`
+- Right-click a file in Explorer → "Open with jsonl-v" (register once in "Settings" first)
 
-## 界面布局
+"File → Recent Files" keeps the last 10 opened files.
+
+## Layout
 
 ```
-┌────────────────────────────────────────────────┐
-│ 菜单栏：文件 / 设置 / 帮助   搜索框  事件过滤    │
-├──────────────┬─────────────────────────────────┤
-│ 请求时间线    │  详情：树视图│美化文本│原始行    │
-│ （wire 模式） │  （llm.request 行另有           │
-│              │   「完整上下文(还原)」页签）       │
-│ 行列表        │                                 │
-│ （虚拟滚动）  │                                 │
-├──────────────┴─────────────────────────────────┤
-│ 状态栏：行数 │ 大小 │ 当前行 │ wire 模式        │
-└────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│ Menu: File / Settings / Help   search box  filter  │
+├───────────────┬────────────────────────────────────┤
+│ Request       │ Detail: Tree | Pretty | Raw        │
+│ timeline      │ (llm.request lines also have the   │
+│ (wire mode)   │  "Full Context (Rebuilt)" tab)     │
+│               │                                    │
+│ Line list     │                                    │
+│ (virtual      │                                    │
+│  scrolling)   │                                    │
+├───────────────┴────────────────────────────────────┤
+│ Status: lines | size | current line | wire mode    │
+└────────────────────────────────────────────────────┘
 ```
 
-- **行列表**：每行显示行号、摘要（取 `type`/`role` 字段）、字节数（KB 标橙，>100KB 标红）。
-  单击选中（列表不跳动），右键可复制原始行/美化文本/纯文本查看。
-- **树视图**：JSON 可折叠树，键/字符串/数字/布尔着色；Tab 栏右侧有「全展开 / 全折叠」。
-- **长字符串**：值太长或含换行时，旁边出现「📄纯文本查看」按钮——弹窗按**真实换行**显示
-  解转义后的文本（等宽字体、可换行、一键复制）。这是看 systemPrompt、思考内容、
-  工具输出的正确姿势。
-- **美化文本 / 原始行** 页签：格式化后的 JSON / 未解析的一行原文。
+- **Line list**: each row shows the line number, a summary (from the `type`/`role` fields) and the byte count
+  (KB in orange, >100KB in red). Single-click selects (the list doesn't jump); right-click to copy the raw line /
+  pretty text / view as plain text.
+- **Tree view**: collapsible JSON tree with key/string/number/boolean coloring; "Expand all / Collapse all"
+  buttons sit on the right of the tab bar.
+- **Long strings**: when a value is too long or contains newlines, a "📄 View as text" button appears next to it —
+  a popup window shows the unescaped text with **real line breaks** (monospace, wrappable, one-click copy).
+  This is the right way to read systemPrompt, thinking content and tool outputs.
+- **Pretty / Raw tabs**: the formatted JSON / the original unparsed line.
 
-## 搜索
+## Search
 
-- 顶栏搜索框输入即搜（200ms 防抖，后台线程，不卡界面）
-- `Aa` 切换区分大小写；「仅看匹配」让行列表只显示命中行
-- `F3` / `Shift+F3` 在命中行间跳转
-- 支持 `key:value` 语法，如 `type:tool.call` 只匹配 JSON 里 type 字段为 tool.call 的行
+- Type in the top search box to search as you type (200ms debounce, background thread, UI stays smooth)
+- `Aa` toggles case sensitivity; "Matches only" makes the line list show only hit lines
+- `F3` / `Shift+F3` jump between hits
+- Supports `key:value` syntax, e.g. `type:tool.call` matches only lines whose JSON `type` field is `tool.call`
 
-## wire.jsonl 增强模式
+## wire.jsonl enhanced mode
 
-打开 Kimi Code 会话日志时自动启用（状态栏显示「wire 模式: N 次请求」）：
+Enabled automatically when opening a Kimi Code session log (the status bar shows "wire mode: N requests"):
 
-- **事件着色**：llm.request 黄、tool.call 蓝、tool.result 绿、think 紫、text 灰、
-  usage.record 青、用户审批交互橙、坏行红
-- **请求时间线**（左上角，可折叠）：列出每次 LLM 请求的 turnStep、messageCount
-  和紧随的 token 用量（输入/输出/缓存命中），点击跳转到对应行
-- **完整上下文（还原）**：选中一个 llm.request 行，详情切到「完整上下文（还原）」页签——
-  近似还原该次请求实际发送的完整请求体：开头是系统提示词与工具定义
-  （取自 `profile.bind` / `llm.tools_snapshot`，占位行可点开读原文、可跳转到源行），
-  其后是完整消息序列（用户消息、注入提醒、思考、工具调用与结果
-  按 toolCallId 配对缩进），并校验还原消息数与 messageCount 一致
-- **事件过滤**：顶栏下拉框只显示某类事件
+- **Event coloring**: llm.request yellow, tool.call blue, tool.result green, think purple, text gray,
+  usage.record cyan, user-approval interactions orange, broken lines red
+- **Request timeline** (top left, collapsible): lists each LLM request's turnStep, messageCount and the
+  following token usage (input/output/cache hits); click to jump to the corresponding line
+- **Full Context (Rebuilt)**: select an llm.request line and switch the detail pane to the
+  "Full Context (Rebuilt)" tab — an approximate reconstruction of the full request body actually sent:
+  the system prompt and tool definitions come first (taken from `profile.bind` / `llm.tools_snapshot`;
+  the placeholder lines can be opened to read the original text or jumped to their source line), followed by
+  the full message sequence (user messages, injected reminders, thinking, tool calls and results paired and
+  indented by toolCallId), with a check that the rebuilt message count matches messageCount
+- **Event filter**: the dropdown in the top bar shows only the chosen event type
 
-## 设置（菜单「设置」）
+## Settings (menu "Settings")
 
-- 字体大小（10–24，即时生效）
-- 深色/浅色主题（默认浅色）
-- 界面语言：中文 / English
-- 注册/取消资源管理器右键菜单
-- 打开配置文件所在目录（`%APPDATA%/jsonl-v/config.json`）
+- Font size (10–24, takes effect immediately)
+- Dark/light theme (light by default)
+- UI language: 中文 / English
+- Register/unregister the Explorer context menu
+- Open the config file folder (`%APPDATA%/jsonl-v/config.json`)
 
-所有设置自动保存，下次启动生效。
+All settings are saved automatically and take effect on the next launch.
 
-## 快捷键
+## Shortcuts
 
-| 键 | 功能 |
+| Key | Action |
 |---|---|
-| Ctrl+O | 打开文件 |
-| F5 | 重新加载（文件被外部修改/追加后） |
-| Ctrl+F | 聚焦搜索框 |
-| F3 / Shift+F3 | 下一个 / 上一个搜索命中 |
-| ↑ / ↓ | 移动选中行 |
-| PgUp / PgDn | 翻页移动 |
-| Ctrl+C | 复制当前行（美化文本） |
+| Ctrl+O | Open file |
+| F5 | Reload (after the file was modified/appended externally) |
+| Ctrl+F | Focus the search box |
+| F3 / Shift+F3 | Next / previous search hit |
+| ↑ / ↓ | Move selection |
+| PgUp / PgDn | Move selection by page |
+| Ctrl+C | Copy current line (pretty) |
 
 
 ## License

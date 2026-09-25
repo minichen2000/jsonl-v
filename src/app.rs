@@ -657,7 +657,7 @@ impl JsonlApp {
                         Some(false) => {
                             if ui.button(t.shell_register).clicked() {
                                 ui.close_menu();
-                                self.status = match shell_menu::register() {
+                                self.status = match shell_menu::register(t.shell_open_with) {
                                     Ok(()) => {
                                         self.shell_registered = Some(true);
                                         self.t().shell_registered_ok()

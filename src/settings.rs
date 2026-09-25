@@ -15,9 +15,18 @@ impl Default for Settings {
         Self {
             font_size: 15.0,
             dark: false,
-            lang: "zh".to_string(),
+            lang: default_lang(),
             recent_files: Vec::new(),
         }
+    }
+}
+
+/// 跟随系统语言：locale 以 "zh" 开头用中文，否则英文兜底。
+/// 仅在配置文件缺失或没有 lang 字段时生效；用户已保存的选择优先。
+fn default_lang() -> String {
+    match sys_locale::get_locale() {
+        Some(locale) if locale.starts_with("zh") => "zh".to_string(),
+        _ => "en".to_string(),
     }
 }
 
