@@ -83,3 +83,8 @@
 | ↑ / ↓ | 移动选中行 |
 | PgUp / PgDn | 翻页移动 |
 | Ctrl+C | 复制当前行（美化文本） |
+
+
+## License
+
+[MIT](LICENSE) © 2026 minichen2000
