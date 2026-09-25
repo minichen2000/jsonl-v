@@ -16,15 +16,12 @@ jobs:
           - os: windows-latest
             artifact: jsonl-v.exe
             asset_name: windows-x86_64
-            archive: zip
           - os: macos-latest
             artifact: jsonl-v
             asset_name: macos-aarch64
-            archive: tar.gz
           - os: ubuntu-latest
             artifact: jsonl-v
             asset_name: linux-x86_64
-            archive: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -39,10 +36,8 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $name = "jsonl-v-$tag-${{ matrix.asset_name }}"
-          New-Item -ItemType Directory -Path "dist/$name" | Out-Null
-          Copy-Item "target/release/${{ matrix.artifact }}" "dist/$name/"
-          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          New-Item -ItemType Directory -Path "dist" | Out-Null
+          Copy-Item "target/release/${{ matrix.artifact }}" "dist/jsonl-v-$tag-${{ matrix.asset_name }}.exe"
 
       - name: Package (Unix)
         if: runner.os != 'Windows'

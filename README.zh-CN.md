@@ -8,6 +8,13 @@
 - **使用说明**：见下文
 - **构建说明**：见 [BUILDING.md](BUILDING.zh-CN.md)
 
+## 下载
+
+从 [GitHub Releases](../../releases) 下载：
+
+- **Windows**：下载 `jsonl-v-vX.Y.Z-windows-x86_64.exe`，绿色单文件，放到任意目录双击即用。首次运行可能弹出蓝色「Windows 已保护你的电脑」（Microsoft Defender SmartScreen）提示——这是因为小开源项目没有购买商业代码签名证书，属正常现象，并非病毒；点「更多信息」→「仍要运行」即可，只需操作一次。
+- **macOS / Linux**：下载 `.tar.gz` 解压后 `chmod +x` 再运行；macOS 如提示无法打开，先执行一次 `xattr -d com.apple.quarantine <二进制文件>`。
+
 ## 打开文件
 
 四种方式任选：
