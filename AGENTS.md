@@ -20,4 +20,3 @@
 
 - 纯 Rust + egui，单文件 exe
 - Windows 下图标由 `build.rs` 内嵌（`#[cfg(windows)]` 门控；`assets/icon.ico` 缺失时跳过）
-- 本机访问 github.com 依赖 hosts 条目 `140.82.112.3 github.com`（网络间歇性干扰，失败时重试即可）
