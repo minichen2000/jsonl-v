@@ -1,5 +1,6 @@
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{Align2, Color32, Context, FontFamily, FontId, Key, Modifiers, RichText, Ui};
@@ -12,7 +13,7 @@ use crate::search::{Query, SearchHandle, SearchMsg};
 use crate::settings::Settings;
 use crate::shell_menu;
 use crate::text_view::{is_long_text, TextViewWindow};
-use crate::wire::{self, CtxItem, RequestEntry, WireKind};
+use crate::wire::{self, CtxItem, RequestEntry, Side, WireKind};
 
 const SEARCH_DEBOUNCE_MS: u128 = 200;
 
@@ -24,6 +25,9 @@ const KIND_TEXT: Color32 = Color32::from_rgb(0x9e, 0x9e, 0x9e); // 灰
 const KIND_USAGE: Color32 = Color32::from_rgb(0x56, 0xc2, 0xd6); // 青
 const KIND_INTERACTION: Color32 = Color32::from_rgb(0xd1, 0x9a, 0x66); // 橙
 const BAD_LINE: Color32 = Color32::from_rgb(0xe0, 0x6c, 0x75); // 红
+
+/// 粗体 emoji 字体族名（在 main.rs 注册）：分侧徽标图标用粗线条版本
+pub const EMOJI_BOLD_FAMILY: &str = "emoji-bold";
 const SIZE_KB: Color32 = Color32::from_rgb(0xee, 0x99, 0x28); // KB 标橙
 const SIZE_BIG: Color32 = Color32::from_rgb(0xe0, 0x6c, 0x75); // >100KB 标红
 
@@ -33,6 +37,15 @@ enum DetailTab {
     Pretty,
     Raw,
     Rebuild,
+}
+
+/// 重建上下文时按来源侧统计的条目数与字节数
+#[derive(Clone, Copy, Default)]
+struct SideStat {
+    host_n: usize,
+    host_bytes: usize,
+    llm_n: usize,
+    llm_bytes: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -109,7 +122,7 @@ pub struct JsonlApp {
     last_row_range: Option<Range<usize>>,
     // 详情
     tab: DetailTab,
-    rebuild_cache: Option<(usize, Vec<CtxItem>, u64, usize)>,
+    rebuild_cache: Option<(usize, Vec<CtxItem>, u64, usize, SideStat)>,
     // 长文本窗口
     text_windows: Vec<TextViewWindow>,
     // 结构化 JSON 窗口（请求体重建）
@@ -124,7 +137,7 @@ pub struct JsonlApp {
     show_shortcuts: bool,
     status: String,
     // 详情面板缓存：选中行的解析结果，避免每帧克隆大 JSON
-    detail_cache: Option<(usize, Result<serde_json::Value, String>, String)>,
+    detail_cache: Option<(usize, Result<serde_json::Value, String>, String, String)>,
     // 树视图全展开/全折叠
     tree_default_open: Option<bool>,
     tree_gen: u64,
@@ -482,6 +495,11 @@ impl JsonlApp {
     // ---- 快捷键 ----
 
     fn handle_keys(&mut self, ctx: &Context) {
+        // 有控件持有键盘焦点（搜索框、各文本编辑区）时全局快捷键让位，
+        // 否则方向键、Ctrl+C 等会被这里消费掉，文本区收不到
+        if ctx.wants_keyboard_input() {
+            return;
+        }
         let (open, reload, find, f3, shift_f3, copy, up, down, pgup, pgdn) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::CTRL, Key::O),
@@ -1044,12 +1062,16 @@ impl JsonlApp {
                 wire::classify(&info.parsed) == WireKind::LlmRequest
             };
             // 解析结果按行缓存；take 出来用，避免每帧克隆大 JSON（如完整工具 schema 行）
-            if self.detail_cache.as_ref().map(|(l, _, _)| *l) != Some(sel) {
+            if self.detail_cache.as_ref().map(|(l, ..)| *l) != Some(sel) {
                 let info = doc.peek_info(sel);
                 let raw = doc.raw_line(sel).to_string();
-                self.detail_cache = Some((sel, info.parsed, raw));
+                let pretty = match &info.parsed {
+                    Ok(v) => serde_json::to_string_pretty(v).unwrap_or_else(|_| raw.clone()),
+                    Err(_) => raw.clone(),
+                };
+                self.detail_cache = Some((sel, info.parsed, raw, pretty));
             }
-            let Some((_, parsed, raw)) = self.detail_cache.take() else {
+            let Some((_, parsed, raw, mut pretty)) = self.detail_cache.take() else {
                 return;
             };
             let line_no = sel + 1;
@@ -1107,16 +1129,15 @@ impl JsonlApp {
                     }
                 },
                 DetailTab::Pretty => {
-                    let text = match &parsed {
-                        Ok(v) => serde_json::to_string_pretty(v).unwrap_or_else(|_| raw.clone()),
-                        Err(_) => raw.clone(),
-                    };
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(text).font(FontId::new(fs, FontFamily::Monospace)),
-                            )
-                            .wrap(),
+                        let edit_id = egui::Id::new(("detail_pretty_edit", sel));
+                        show_editable_text(
+                            ui,
+                            edit_id,
+                            &mut pretty,
+                            FontId::new(fs, FontFamily::Monospace),
+                            ui.available_width(),
+                            t,
                         );
                     });
                 }
@@ -1130,7 +1151,7 @@ impl JsonlApp {
                 }
             }
             // 详情缓存放回
-            self.detail_cache = Some((sel, parsed, raw));
+            self.detail_cache = Some((sel, parsed, raw, pretty));
         });
     }
 
@@ -1140,10 +1161,23 @@ impl JsonlApp {
                 let items = wire::rebuild_context(doc, request_line);
                 let count = wire::estimate_message_count(&items);
                 let bytes = wire::estimate_context_bytes(&items);
-                self.rebuild_cache = Some((request_line, items, count, bytes));
+                let mut stat = SideStat::default();
+                for it in &items {
+                    match it.side() {
+                        Side::Host => {
+                            stat.host_n += 1;
+                            stat.host_bytes += wire::ctx_item_bytes(it);
+                        }
+                        Side::Llm => {
+                            stat.llm_n += 1;
+                            stat.llm_bytes += wire::ctx_item_bytes(it);
+                        }
+                    }
+                }
+                self.rebuild_cache = Some((request_line, items, count, bytes, stat));
             }
         }
-        let Some((_, items, est, bytes)) = &self.rebuild_cache else {
+        let Some((_, items, est, bytes, stat)) = &self.rebuild_cache else {
             return;
         };
         let t = self.t();
@@ -1156,6 +1190,27 @@ impl JsonlApp {
         ui.horizontal(|ui| {
             ui.label(t.rebuilt_count(*est));
             ui.label(t.context_bytes(fmt_bytes(*bytes)));
+            ui.label(
+                RichText::new("🖥")
+                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                    .color(KIND_TOOL_RESULT)
+                    .strong(),
+            );
+            ui.label(
+                RichText::new(t.side_stats_host(stat.host_n, fmt_bytes(stat.host_bytes)))
+                    .color(Color32::GRAY),
+            );
+            ui.label(RichText::new("|").color(Color32::GRAY));
+            ui.label(
+                RichText::new("🤖")
+                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                    .color(KIND_TOOL_CALL)
+                    .strong(),
+            );
+            ui.label(
+                RichText::new(t.side_stats_llm(stat.llm_n, fmt_bytes(stat.llm_bytes)))
+                    .color(Color32::GRAY),
+            );
             if let Some(d) = declared {
                 let ok = d == *est;
                 ui.colored_label(
@@ -1176,10 +1231,58 @@ impl JsonlApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
             let mut msg_no = 0usize;
+            let mut prev_side: Option<Side> = None;
             for item in items {
+                let side = item.side();
+                let role = item.role();
+                let (side_icon, side_short, side_color) = match side {
+                    Side::Host => ("🖥", t.side_host_short, KIND_TOOL_RESULT),
+                    Side::Llm => ("🤖", t.side_llm_short, KIND_TOOL_CALL),
+                };
+                // 行首来源徽标：彩色加粗图标 + 灰色〔role · 侧〕；Message 标题已含 role，只标侧
+                let badge = if matches!(item, CtxItem::Message { .. }) {
+                    format!("〔{side_short}〕")
+                } else {
+                    format!("〔{role} · {side_short}〕")
+                };
+                // 侧切换（含首条）时插入分侧标题行
+                if prev_side != Some(side) {
+                    let (label, color) = match side {
+                        Side::Host => (t.side_host, KIND_TOOL_RESULT),
+                        Side::Llm => (t.side_llm, KIND_TOOL_CALL),
+                    };
+                    if prev_side.is_some() {
+                        ui.add_space(6.0);
+                    }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(RichText::new("────── ").color(color).strong().small());
+                        ui.label(
+                            RichText::new(side_icon)
+                                .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                .color(color)
+                                .strong()
+                                .small(),
+                        );
+                        ui.label(
+                            RichText::new(format!(" {label} ──────"))
+                                .color(color)
+                                .strong()
+                                .small(),
+                        );
+                    });
+                    prev_side = Some(side);
+                }
                 match item {
                     CtxItem::SystemPrompt { line_idx, text } => {
                         ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
                             ui.label(
                                 RichText::new(t.sys_prompt_label).color(KIND_USAGE).strong(),
                             );
@@ -1203,6 +1306,13 @@ impl JsonlApp {
                         tool_count,
                     } => {
                         ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
                             ui.label(
                                 RichText::new(t.tools_def_label(*tool_count))
                                     .color(KIND_USAGE)
@@ -1241,11 +1351,20 @@ impl JsonlApp {
                             }
                             None => "",
                         };
-                        ui.label(
-                            RichText::new(format!("#{msg_no} {role}{origin_tag}"))
-                                .color(color)
-                                .strong(),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
+                            ui.label(
+                                RichText::new(format!("#{msg_no} {role}{origin_tag}"))
+                                    .color(color)
+                                    .strong(),
+                            );
+                        });
                         if let Some(a) = text_with_view_button(
                             ui,
                             text,
@@ -1257,7 +1376,16 @@ impl JsonlApp {
                         }
                     }
                     CtxItem::Think(txt) => {
-                        ui.label(RichText::new(t.think_label).color(KIND_THINK).strong());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
+                            ui.label(RichText::new(t.think_label).color(KIND_THINK).strong());
+                        });
                         if let Some(a) = text_with_view_button(
                             ui,
                             txt,
@@ -1269,7 +1397,16 @@ impl JsonlApp {
                         }
                     }
                     CtxItem::Text(txt) => {
-                        ui.label(RichText::new(t.text_label).color(KIND_TEXT).strong());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
+                            ui.label(RichText::new(t.text_label).color(KIND_TEXT).strong());
+                        });
                         if let Some(a) = text_with_view_button(
                             ui,
                             txt,
@@ -1281,11 +1418,20 @@ impl JsonlApp {
                         }
                     }
                     CtxItem::ToolCall { id, name, args } => {
-                        ui.label(
-                            RichText::new(format!("🔧 {name}  ({})", short_id(id)))
-                                .color(KIND_TOOL_CALL)
-                                .strong(),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
+                            ui.label(
+                                RichText::new(format!("🔧 {name}  ({id})"))
+                                    .color(KIND_TOOL_CALL)
+                                    .strong(),
+                            );
+                        });
                         if let Some(a) = text_with_view_button(
                             ui,
                             args,
@@ -1296,11 +1442,21 @@ impl JsonlApp {
                             pending_open = Some(a);
                         }
                     }
-                    CtxItem::ToolResult { id, output } => {
-                        ui.label(
-                            RichText::new(format!("  ↩ result ({})", short_id(id)))
-                                .color(KIND_TOOL_RESULT),
-                        );
+                    CtxItem::ToolResult { id, name, output } => {
+                        let title = match name {
+                            Some(n) => format!("  ↩ {n} result ({id})"),
+                            None => format!("  ↩ result ({id})"),
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(side_icon)
+                                    .family(egui::FontFamily::Name(EMOJI_BOLD_FAMILY.into()))
+                                    .color(side_color)
+                                    .strong(),
+                            );
+                            ui.label(RichText::new(&badge).color(Color32::GRAY).small());
+                            ui.label(RichText::new(title).color(KIND_TOOL_RESULT));
+                        });
                         if let Some(a) = text_with_view_button(
                             ui,
                             output,
@@ -1523,6 +1679,191 @@ pub fn fmt_bytes(n: usize) -> String {
     }
 }
 
+/// 全屏窗口的内容区位置与大小。
+/// egui `Window::fixed_size` 设的是内容区尺寸，标题栏与窗口边框边距会再加在外面，
+/// 需按 window.rs 同样的公式精确扣减，否则全屏窗口右边/下边会超出屏幕。
+pub fn maximized_pos_size(ctx: &egui::Context, title: &RichText) -> (egui::Pos2, egui::Vec2) {
+    let screen = ctx.screen_rect();
+    let style = ctx.style();
+    let frame = egui::Frame::window(&style);
+    let title_font_h = ctx
+        .fonts(|fonts| title.font_height(fonts, &style))
+        .max(style.spacing.interact_size.y);
+    let title_bar_height = title_font_h + frame.inner_margin.sum().y;
+    let chrome = frame.total_margin().sum()
+        + egui::vec2(0.0, title_bar_height + frame.stroke.width);
+    (screen.min, screen.size() - chrome)
+}
+
+/// 读出文本编辑区当前选区（字符索引，升序；空选区为 None）。
+pub fn text_edit_selection(ctx: &egui::Context, edit_id: egui::Id) -> Option<(usize, usize)> {
+    egui::text_edit::TextEditState::load(ctx, edit_id)
+        .and_then(|s| s.cursor.char_range())
+        .map(|r| {
+            let [a, b] = r.sorted();
+            (a.index.min(b.index), a.index.max(b.index))
+        })
+        .filter(|(a, b)| a < b)
+}
+
+/// egui 的 TextEdit 会把右键按下也当成一次新点选、清空既有选区
+/// （text_cursor_state.rs 的 pointer_interaction 用的是 any_pressed）。
+/// 用法：ui.add(TextEdit) 前先 text_edit_selection 快照；
+/// add 之后若 response.secondary_clicked()，调本函数把选区还原。
+pub fn restore_text_edit_selection(
+    ctx: &egui::Context,
+    edit_id: egui::Id,
+    sel: Option<(usize, usize)>,
+) {
+    let Some((a, b)) = sel else { return };
+    if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, edit_id) {
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor { index: a, prefer_next_row: true },
+            egui::text::CCursor { index: b, prefer_next_row: true },
+        )));
+        state.store(ctx, edit_id);
+    }
+    // 选区高亮只在文本区持有焦点时绘制
+    ctx.memory_mut(|m| m.request_focus(edit_id));
+}
+
+/// 给文本编辑区挂右键菜单：仅「拷贝」（复制当前选中内容，无选中时禁用）。
+pub fn text_edit_copy_menu(
+    resp: &egui::Response,
+    ctx: &egui::Context,
+    edit_id: egui::Id,
+    content: &str,
+    t: &T,
+) {
+    resp.context_menu(|ui| {
+        // 菜单宽度按内容估算，默认可换行会把短文案（如 "Copy"）折行；禁止换行
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        let sel = text_edit_selection(ctx, edit_id);
+        if ui
+            .add_enabled(sel.is_some(), egui::Button::new(t.copy_selection))
+            .clicked()
+        {
+            if let Some((a, b)) = sel {
+                let s: String = content.chars().skip(a).take(b - a).collect();
+                ui.ctx().copy_text(s);
+            }
+            ui.close_menu();
+            // 防御：点「拷贝」后选区若被 egui 内部路径动过（菜单关闭、焦点
+            // 流转等），当帧强制还原，避免高亮闪一下
+            restore_text_edit_selection(ui.ctx(), edit_id, sel);
+        }
+        // 选区高亮只在文本区持有焦点时绘制；右键菜单（以及点「拷贝」时
+        // 菜单按钮获得的焦点）会夺走焦点，逐帧把焦点还给文本区
+        ui.ctx().memory_mut(|m| m.request_focus(edit_id));
+    });
+}
+
+/// 三处「格式化文本/纯文本」编辑区的统一显示：可编辑（不保存）、右键「拷贝」菜单。
+///
+/// 内含右键高亮防闪烁处理：egui 在绘制前就清空选区，事后还原必然闪一帧，
+/// 所以右键当帧提前用上一帧缓存的排版结果把高亮垫到文本底下（详见函数内注释）。
+pub fn show_editable_text(
+    ui: &mut Ui,
+    edit_id: egui::Id,
+    text: &mut String,
+    font: FontId,
+    desired_width: f32,
+    t: &T,
+) -> egui::Response {
+    let ctx = ui.ctx().clone();
+    let prev_sel = text_edit_selection(&ctx, edit_id);
+    // egui 的 TextEdit 会把右键按下当成一次新点选，在绘制之前就清空选区
+    // （text_cursor_state.rs 的 pointer_interaction 用的是 any_pressed），
+    // 清选区与文本绘制同帧原子完成，事后还原/补绘必然差一帧。所以反过来：
+    // 右键这帧在 TextEdit 绘制之前，先用上一帧缓存的排版结果把高亮垫在
+    // 即将绘制的文本底下，让 egui 照常清选区、照常画文字——高亮从字底下透出来。
+    let cache_id = edit_id.with("sel_galley");
+    if let Some(sel) = prev_sel {
+        if ctx.input(|i| i.pointer.secondary_pressed()) {
+            let cached = ctx.data_mut(|d| {
+                d.get_temp::<(Arc<egui::Galley>, egui::Pos2, egui::Rect)>(cache_id)
+            });
+            if let Some((galley, galley_pos, clip)) = cached {
+                let on_text = ctx
+                    .input(|i| i.pointer.interact_pos().map_or(false, |p| clip.contains(p)));
+                if on_text {
+                    paint_selection_highlight(ui, &galley, galley_pos, clip, sel);
+                }
+            }
+        }
+    }
+    let output = egui::TextEdit::multiline(text)
+        .id(edit_id)
+        .font(font)
+        .frame(false)
+        .desired_width(desired_width)
+        .show(ui);
+    let resp = output.response.clone();
+    if (resp.hovered() && ctx.input(|i| i.pointer.secondary_pressed()))
+        || resp.secondary_clicked()
+    {
+        restore_text_edit_selection(&ctx, edit_id, prev_sel);
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            cache_id,
+            (output.galley.clone(), output.galley_pos, output.text_clip_rect),
+        )
+    });
+    text_edit_copy_menu(&resp, &ctx, edit_id, text, t);
+    resp
+}
+
+/// 按 egui 画选区的算法（visuals.rs 的 paint_text_selection）把高亮矩形画到
+/// 指定位置。用于右键当帧在 TextEdit 绘制之前预先把高亮垫到文本底下。
+fn paint_selection_highlight(
+    ui: &Ui,
+    galley: &egui::Galley,
+    galley_pos: egui::Pos2,
+    clip: egui::Rect,
+    (a, b): (usize, usize),
+) {
+    let ccursor = |index: usize| egui::text::CCursor { index, prefer_next_row: true };
+    let (ca, cb) = (galley.from_ccursor(ccursor(a)), galley.from_ccursor(ccursor(b)));
+    let (min, max) = if (ca.rcursor.row, ca.rcursor.column) <= (cb.rcursor.row, cb.rcursor.column) {
+        (ca.rcursor, cb.rcursor)
+    } else {
+        (cb.rcursor, ca.rcursor)
+    };
+    let fill = ui.visuals().selection.bg_fill;
+    let painter = ui.painter().with_clip_rect(clip);
+    let offset = galley_pos.to_vec2();
+    for ri in min.row..=max.row {
+        let Some(row) = galley.rows.get(ri) else { break };
+        let left = if ri == min.row { row.x_offset(min.column) } else { row.rect.left() };
+        let right = if ri == max.row {
+            row.x_offset(max.column)
+        } else if row.ends_with_newline {
+            // 让行尾的换行符也显得被选中（同 egui 内部做法）
+            row.rect.right() + row.height() / 2.0
+        } else {
+            row.rect.right()
+        };
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(left, row.min_y()),
+            egui::pos2(right, row.max_y()),
+        );
+        painter.rect_filled(rect.translate(offset), 0.0, fill);
+    }
+}
+
+/// 弹窗用窗口框架：默认阴影太淡，加深偏移与模糊，让窗口有浮在上层的感觉。
+pub fn popup_frame(ctx: &egui::Context) -> egui::Frame {
+    let mut frame = egui::Frame::window(&ctx.style());
+    frame.shadow = egui::epaint::Shadow {
+        offset: [6, 10],
+        blur: 20,
+        spread: 2,
+        color: Color32::from_black_alpha(96),
+    };
+    frame
+}
+
 /// 路径超宽时省略前部为「…」，保留文件名所在的尾部，宽度用满 max_w。
 fn fit_path_front(ui: &Ui, path: &str, max_w: f32, font_id: FontId) -> String {
     let width = |s: &str| {
@@ -1546,12 +1887,4 @@ fn fit_path_front(ui: &Ui, path: &str, max_w: f32, font_id: FontId) -> String {
         }
     }
     format!("…{}", chars[n - hi..].iter().collect::<String>())
-}
-
-fn short_id(id: &str) -> String {
-    if id.chars().count() > 12 {
-        format!("{}…", id.chars().take(12).collect::<String>())
-    } else {
-        id.to_string()
-    }
 }

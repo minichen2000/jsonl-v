@@ -31,7 +31,7 @@ Pick any of the four:
 ┌────────────────────────────────────────────────────┐
 │ Menu: File / Settings / Help   search box  filter  │
 ├───────────────┬────────────────────────────────────┤
-│ Request       │ Detail: Tree | Pretty | Raw        │
+│ Request       │ Detail: Tree | Formatted | Raw     │
 │ timeline      │ (llm.request lines also have the   │
 │ (wire mode)   │  "Full Context (Rebuilt)" tab)     │
 │               │                                    │
@@ -45,13 +45,14 @@ Pick any of the four:
 
 - **Line list**: each row shows the line number, a summary (from the `type`/`role` fields) and the byte count
   (KB in orange, >100KB in red). Single-click selects (the list doesn't jump); right-click to copy the raw line /
-  pretty text / view as plain text.
+  formatted text / view as plain text.
 - **Tree view**: collapsible JSON tree with key/string/number/boolean coloring; "Expand all / Collapse all"
   buttons sit on the right of the tab bar.
 - **Long strings**: when a value is too long or contains newlines, a "📄 View as text" button appears next to it —
-  a popup window shows the unescaped text with **real line breaks** (monospace, wrappable, one-click copy).
+  a popup window shows the unescaped text with **real line breaks** (monospace, wrappable, one-click copy,
+  maximizable, editable without saving, right-click to copy the selection).
   This is the right way to read systemPrompt, thinking content and tool outputs.
-- **Pretty / Raw tabs**: the formatted JSON / the original unparsed line.
+- **Formatted / Raw tabs**: the formatted JSON / the original unparsed line.
 
 ## Search
 
@@ -73,7 +74,10 @@ Enabled automatically when opening a Kimi Code session log (the status bar shows
   the system prompt and tool definitions come first (taken from `profile.bind` / `llm.tools_snapshot`;
   the placeholder lines can be opened to read the original text or jumped to their source line), followed by
   the full message sequence (user messages, injected reminders, thinking, tool calls and results paired and
-  indented by toolCallId), with a check that the rebuilt message count matches messageCount
+  indented by toolCallId), with a check that the rebuilt message count matches messageCount.
+  Each item carries a `〔role · side〕` badge and items are grouped under
+  "🖥 Host/User side" / "🤖 LLM output" section headers, with per-side item/byte stats on the toolbar;
+  tool entries show full call ids and results are labeled with the paired tool name
 - **Event filter**: the dropdown in the top bar shows only the chosen event type
 
 ## Settings (menu "Settings")
@@ -96,9 +100,11 @@ All settings are saved automatically and take effect on the next launch.
 | F3 / Shift+F3 | Next / previous search hit |
 | ↑ / ↓ | Move selection |
 | PgUp / PgDn | Move selection by page |
-| Ctrl+C | Copy current line (pretty) |
+| Ctrl+C | Copy current line (formatted) |
 
 
 ## License
 
 [MIT](LICENSE) © 2026 minichen2000
+
+Bundles the [Noto Emoji](https://github.com/googlefonts/noto-emoji) font (SIL OFL 1.1, see `assets/NotoEmoji-OFL.txt`) for emoji rendering.

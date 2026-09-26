@@ -168,7 +168,7 @@ pub struct LineInfo {
 ┌──────────────────────────────────────────────────────────────┐
 │ 菜单栏: [打开文件] [重新加载]  🔍搜索框   ☑仅看匹配  事件过滤▼ │
 ├───────────────────────┬──────────────────────────────────────┤
-│ 行列表（虚拟滚动）      │ 详情面板（Tab: 树视图│美化文本│原始行）│
+│ 行列表（虚拟滚动）      │ 详情面板（Tab: 树视图│格式化文本│原始行）│
 │ #  摘要         大小   │ ┌──────────────────────────────────┐ │
 │ 1  metadata      62B  │ │ 可折叠 JSON 树，键类型着色        │ │
 │ 5  profile.bind  38KB │ │ 长字符串值显示 [📄纯文本查看]按钮  │ │
@@ -179,16 +179,17 @@ pub struct LineInfo {
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- 快捷键：`↑/↓/PgUp/PgDn` 移动选中行，`Ctrl+F` 聚焦搜索，`F3/Shift+F3` 下一个/上一个命中，`Ctrl+C` 复制当前行美化文本，`F5` 重载文件，`Ctrl+O` 打开。
+- 快捷键：`↑/↓/PgUp/PgDn` 移动选中行，`Ctrl+F` 聚焦搜索，`F3/Shift+F3` 下一个/上一个命中，`Ctrl+C` 复制当前行格式化文本，`F5` 重载文件，`Ctrl+O` 打开。
 - 行列表摘要规则：优先取 `type` 字段；无则取 `role`；再无则取前 40 字符。尾部显示该行字节数（KB 单位标橙，>100KB 标红）。
-- 「美化文本」Tab：`serde_json::to_string_pretty`，等宽字体，可选自动换行。
+- 「格式化文本」Tab：`serde_json::to_string_pretty`，等宽字体，可编辑（改动不保存）、右键「拷贝」选中内容。
 - 「原始行」Tab：未经解析的一行原文（验证解析保真用）。
 
 **text_view.rs — 本工具的灵魂**
 
 判定规则：字符串值含 `\n` / `\t` 转义序列，或长度 > 200 字符 → 在树节点旁显示「纯文本查看」按钮。点击后弹窗或内嵌面板：
 - 展示**解转义后**的真实文本（`\n` → 换行，`\\` → `\`，unicode 转义还原，中文正常显示）
-- 等宽字体、自动换行开关、显示行数/字符数、一键复制
+- 等宽字体、自动换行开关、显示行数/字符数、一键复制全部、右键「拷贝」选中内容、可全屏
+  （内容为可编辑 TextEdit，改动不保存，有光标便于拖选）
 - 典型受益字段：`systemPrompt`、`content[].text`、`think`、`args.command`、`result.output`、`request.display.plan`
 
 **wire.rs — wire.jsonl 增强**
@@ -198,8 +199,8 @@ pub struct LineInfo {
 功能：
 1. **事件着色**：llm.request=黄、tool.call=蓝、tool.result=绿、content.part(think)=紫、content.part(text)=灰、usage.record=青、interaction.*=橙、错误/坏行=红。
 2. **请求时间线面板**（可折叠，置于行列表上方）：列出全部 `llm.request`，每项显示 `#序号 turnStep messageCount`，点击跳转到对应行。
-3. **上下文重建**：选中某个 `llm.request` 行时，详情面板多一个「重建上下文」Tab——向前扫描收集 `context.append_message` 和 `context.append_loop_event`，按消息序列渲染（role 标签 + 内容 + 工具调用配对），近似还原该次请求实际发送的 messages 数组。tool.call / tool.result 按 `toolCallId` 配对缩进显示。
-4. **请求体 JSON 查看**：「重建上下文」Tab 工具行有「📦 请求体 JSON」按钮——把重建结果组装成 OpenAI Chat Completions 风格的完整请求体（`model`/`max_tokens` 取自该 `llm.request` 行；`messages[0]` 为 system 提示词，连续的 think/text/tool.call 合并为一条 assistant 消息，tool.result 为带 `tool_call_id` 的 tool 消息；`tools` 取自最新 `llm.tools_snapshot`），在独立大窗口（900×700）中以可折叠 JSON 树展示，支持全展开/全折叠、复制全部、树内长字符串再开纯文本窗口。
+3. **上下文重建**：选中某个 `llm.request` 行时，详情面板多一个「重建上下文」Tab——向前扫描收集 `context.append_message` 和 `context.append_loop_event`，按消息序列渲染（role 标签 + 内容 + 工具调用配对），近似还原该次请求实际发送的 messages 数组。tool.call / tool.result 按 `toolCallId` 配对缩进显示，均显示完整 id，result 标注配对工具名。每条目标题附来源徽标 `〔role · 侧〕`（role 与请求体一致：system/tools/user/assistant/tool），并按「🖥 宿主/用户侧 / 🤖 LLM 输出」分段（侧切换处插分隔标题行）；Tab 工具行显示双侧条目数与字节统计。
+4. **请求体 JSON 查看**：「重建上下文」Tab 工具行有「📦 请求体 JSON」按钮——把重建结果组装成 OpenAI Chat Completions 风格的完整请求体（`model`/`max_tokens` 取自该 `llm.request` 行；`messages[0]` 为 system 提示词，连续的 think/text/tool.call 合并为一条 assistant 消息，tool.result 为带 `tool_call_id` 的 tool 消息；`tools` 取自最新 `llm.tools_snapshot`），在独立大窗口（900×700）中以可折叠 JSON 树展示，支持全展开/全折叠、复制全部、树内长字符串再开纯文本窗口。请求体窗口与纯文本窗口均支持一键全屏/还原（全屏时用另一套窗口 id，还原后回到原位置尺寸）。
 5. **usage 小结**：时间线每项旁显示紧随的 `usage.record` 的 input/output/cacheRead token 数。
 
 **search.rs**

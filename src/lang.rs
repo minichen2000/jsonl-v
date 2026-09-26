@@ -70,9 +70,16 @@ pub struct T {
     pub jump_to_source: &'static str,
     pub request_json_btn: &'static str,
     pub request_json_failed: &'static str,
+    pub side_host: &'static str,
+    pub side_llm: &'static str,
+    pub side_host_short: &'static str,
+    pub side_llm_short: &'static str,
     // 文本查看窗口
     pub wrap_toggle: &'static str,
     pub copy_all: &'static str,
+    pub copy_selection: &'static str,
+    pub win_maximize: &'static str,
+    pub win_restore: &'static str,
     // 弹窗
     pub about_title: &'static str,
     pub about_desc: &'static str,
@@ -117,10 +124,10 @@ const ZH: T = T {
     case_sensitive_tip: "区分大小写",
     only_matches: "仅看匹配",
     copy_raw: "复制原始行",
-    copy_pretty: "复制美化文本",
+    copy_pretty: "复制格式化文本",
     view_text_line: "📄 纯文本查看该行",
     tab_tree: "🌲 树视图",
-    tab_pretty: "✨ 美化文本",
+    tab_pretty: "✨ 格式化文本",
     tab_raw: "📄 原始行",
     tab_rebuild: "🧩 完整上下文（还原）",
     expand_all: "全展开",
@@ -135,8 +142,15 @@ const ZH: T = T {
     jump_to_source: "跳转到源行",
     request_json_btn: "📦 请求体 JSON",
     request_json_failed: "请求体重建失败",
+    side_host: "宿主/用户侧",
+    side_llm: "LLM 输出",
+    side_host_short: "宿主",
+    side_llm_short: "LLM",
     wrap_toggle: "自动换行",
     copy_all: "复制全部",
+    copy_selection: "拷贝",
+    win_maximize: "⛶ 全屏",
+    win_restore: "🗗 还原",
     about_title: "ℹ 关于 jsonl-v",
     about_desc: "JSONL 文件查看器，对 Kimi Code wire.jsonl 会话日志增强展示。",
     about_tech: "单文件 exe · Rust + egui",
@@ -149,7 +163,7 @@ const ZH: T = T {
     sc_f3: "下一个 / 上一个搜索命中",
     sc_arrows: "移动选中行",
     sc_page: "翻页移动选中行",
-    sc_copy: "复制当前行（美化文本）",
+    sc_copy: "复制当前行（格式化文本）",
     filter_all: "全部事件",
     filter_other: "其他",
 };
@@ -178,10 +192,10 @@ const EN: T = T {
     case_sensitive_tip: "Case sensitive",
     only_matches: "Matches only",
     copy_raw: "Copy raw line",
-    copy_pretty: "Copy pretty-printed",
+    copy_pretty: "Copy formatted",
     view_text_line: "📄 View line as text",
     tab_tree: "🌲 Tree",
-    tab_pretty: "✨ Pretty",
+    tab_pretty: "✨ Formatted",
     tab_raw: "📄 Raw",
     tab_rebuild: "🧩 Full Context (Rebuilt)",
     expand_all: "Expand all",
@@ -196,8 +210,15 @@ const EN: T = T {
     jump_to_source: "Jump to source line",
     request_json_btn: "📦 Request Body JSON",
     request_json_failed: "Failed to rebuild request body",
+    side_host: "Host/User side",
+    side_llm: "LLM output",
+    side_host_short: "host",
+    side_llm_short: "LLM",
     wrap_toggle: "Word wrap",
     copy_all: "Copy all",
+    copy_selection: "Copy",
+    win_maximize: "⛶ Maximize",
+    win_restore: "🗗 Restore",
     about_title: "ℹ About jsonl-v",
     about_desc: "A JSONL file viewer with enhanced support for Kimi Code wire.jsonl session logs.",
     about_tech: "Single-file exe · Rust + egui",
@@ -210,7 +231,7 @@ const EN: T = T {
     sc_f3: "Next / previous search hit",
     sc_arrows: "Move selection",
     sc_page: "Move selection by page",
-    sc_copy: "Copy current line (pretty)",
+    sc_copy: "Copy current line (formatted)",
     filter_all: "All events",
     filter_other: "Other",
 };
@@ -270,9 +291,9 @@ impl T {
     }
     pub fn copied(&self, line: usize, pretty: bool) -> String {
         match (self.menu_file, pretty) {
-            ("文件", true) => format!("已复制第 {line} 行（美化）"),
+            ("文件", true) => format!("已复制第 {line} 行（格式化）"),
             ("文件", false) => format!("已复制第 {line} 行（原始）"),
-            (_, true) => format!("Copied line {line} (pretty)"),
+            (_, true) => format!("Copied line {line} (formatted)"),
             (_, false) => format!("Copied line {line} (raw)"),
         }
     }
@@ -385,6 +406,18 @@ impl T {
         match self.menu_file {
             "文件" => format!("🛠 工具定义（{n} 个工具）"),
             _ => format!("🛠 Tool Definitions ({n} tools)"),
+        }
+    }
+    pub fn side_stats_host(&self, n: usize, size: String) -> String {
+        match self.menu_file {
+            "文件" => format!("宿主侧 {n} 项 · {size}"),
+            _ => format!("host {n} items · {size}"),
+        }
+    }
+    pub fn side_stats_llm(&self, n: usize, size: String) -> String {
+        match self.menu_file {
+            "文件" => format!("LLM 侧 {n} 项 · {size}"),
+            _ => format!("LLM {n} items · {size}"),
         }
     }
     pub fn sys_prompt_title(&self, line: usize) -> String {

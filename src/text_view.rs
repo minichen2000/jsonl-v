@@ -17,6 +17,7 @@ pub struct TextViewWindow {
     pub content: String, // 已解转义的文本
     pub wrap: bool,
     pub open: bool,
+    pub maximized: bool,
 }
 
 impl TextViewWindow {
@@ -27,6 +28,7 @@ impl TextViewWindow {
             content,
             wrap: true,
             open: true,
+            maximized: false,
         }
     }
 
@@ -37,32 +39,60 @@ impl TextViewWindow {
         let mut open = self.open;
         // 标题用与正文协调的字号，避免默认标题栏过大
         let title = RichText::new(format!("📄 {}", self.title)).size(font_size + 1.0);
-        egui::Window::new(title)
-            .id(egui::Id::new(("text_view", self.id)))
-            .default_size([700.0, 500.0])
-            .resizable(true)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                let lines = self.content.lines().count();
-                let chars = self.content.chars().count();
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(t.text_stats(lines, chars)).color(Color32::GRAY));
-                    ui.checkbox(&mut self.wrap, t.wrap_toggle);
-                    if ui.button(t.copy_all).clicked() {
-                        ui.ctx().copy_text(self.content.clone());
-                    }
-                });
-                ui.separator();
-                let text = RichText::new(&self.content)
-                    .font(FontId::new(font_size, FontFamily::Monospace));
-                egui::ScrollArea::both().show(ui, |ui| {
-                    if self.wrap {
-                        ui.add(egui::Label::new(text).wrap());
-                    } else {
-                        ui.label(text);
-                    }
-                });
+        // 全屏用另一套窗口 id：egui 按 id 记忆位置尺寸，
+        // 还原时自动回到普通模式之前的位置和大小
+        let win_id = if self.maximized {
+            egui::Id::new(("text_view_max", self.id))
+        } else {
+            egui::Id::new(("text_view", self.id))
+        };
+        let mut win = egui::Window::new(title.clone())
+            .id(win_id)
+            .frame(crate::app::popup_frame(ctx))
+            .open(&mut open);
+        win = if self.maximized {
+            let (pos, size) = crate::app::maximized_pos_size(ctx, &title);
+            win.fixed_pos(pos)
+                .fixed_size(size)
+                .resizable(false)
+                .collapsible(false)
+        } else {
+            win.default_size([700.0, 500.0]).resizable(true)
+        };
+        win.show(ctx, |ui| {
+            let lines = self.content.lines().count();
+            let chars = self.content.chars().count();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(t.text_stats(lines, chars)).color(Color32::GRAY));
+                ui.checkbox(&mut self.wrap, t.wrap_toggle);
+                if ui.button(t.copy_all).clicked() {
+                    ui.ctx().copy_text(self.content.clone());
+                }
+                let max_label = if self.maximized {
+                    t.win_restore
+                } else {
+                    t.win_maximize
+                };
+                if ui.button(max_label).clicked() {
+                    self.maximized = !self.maximized;
+                }
             });
+            ui.separator();
+            // ScrollArea 滚动轴上内容宽度无限，换行宽度需在进入前捕获
+            let wrap_width = ui.available_width();
+            let font = FontId::new(font_size, FontFamily::Monospace);
+            egui::ScrollArea::both().show(ui, |ui| {
+                let edit_id = egui::Id::new(("text_view_edit", self.id));
+                crate::app::show_editable_text(
+                    ui,
+                    edit_id,
+                    &mut self.content,
+                    font.clone(),
+                    if self.wrap { wrap_width } else { f32::INFINITY },
+                    t,
+                );
+            });
+        });
         self.open = open;
     }
 }

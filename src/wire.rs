@@ -165,7 +165,41 @@ pub enum CtxItem {
         args: String,
     },
     /// tool.result
-    ToolResult { id: String, output: String },
+    ToolResult {
+        id: String,
+        /// 配对 tool.call 的工具名（重建时查表得到，可能缺失）
+        name: Option<String>,
+        output: String,
+    },
+}
+
+/// 上下文条目的来源侧：宿主/用户一侧，还是 LLM 产出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Host,
+    Llm,
+}
+
+impl CtxItem {
+    /// 该条目在请求体 messages 里的 role（ToolsDef 不在 messages 中，归为 "tools"）。
+    pub fn role(&self) -> &str {
+        match self {
+            CtxItem::SystemPrompt { .. } => "system",
+            CtxItem::ToolsDef { .. } => "tools",
+            CtxItem::Message { role, .. } => role.as_str(),
+            CtxItem::Think(_) | CtxItem::Text(_) | CtxItem::ToolCall { .. } => "assistant",
+            CtxItem::ToolResult { .. } => "tool",
+        }
+    }
+
+    /// 该条目来自宿主/用户一侧还是 LLM 一侧。
+    pub fn side(&self) -> Side {
+        match self {
+            CtxItem::Think(_) | CtxItem::Text(_) | CtxItem::ToolCall { .. } => Side::Llm,
+            CtxItem::Message { role, .. } if role == "assistant" => Side::Llm,
+            _ => Side::Host,
+        }
+    }
 }
 
 /// Rebuild the approximate messages array actually sent by the request at
@@ -175,6 +209,8 @@ pub fn rebuild_context(doc: &JsonlDocument, request_line: usize) -> Vec<CtxItem>
     let mut items = Vec::new();
     let mut system_prompt: Option<CtxItem> = None; // 最新的 profile.bind
     let mut tools_def: Option<CtxItem> = None; // 最新的 llm.tools_snapshot
+    let mut call_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new(); // toolCallId → 工具名
     let end = request_line.min(doc.line_count());
     for i in 0..end {
         let raw = doc.raw_line(i);
@@ -230,17 +266,20 @@ pub fn rebuild_context(doc: &JsonlDocument, request_line: usize) -> Vec<CtxItem>
             let mut it = vec![CtxItem::Message { role, text, origin }];
             if let Some(calls) = m.get("toolCalls").and_then(Value::as_array) {
                 for c in calls {
+                    let id = c
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let name = c
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?")
+                        .to_string();
+                    call_names.insert(id.clone(), name.clone());
                     it.push(CtxItem::ToolCall {
-                        id: c
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        name: c
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("?")
-                            .to_string(),
+                        id,
+                        name,
                         args: c
                             .get("args")
                             .map(|a| a.to_string())
@@ -273,40 +312,50 @@ pub fn rebuild_context(doc: &JsonlDocument, request_line: usize) -> Vec<CtxItem>
                         _ => {}
                     }
                 }
-                Some("tool.call") => items.push(CtxItem::ToolCall {
-                    id: e
+                Some("tool.call") => {
+                    let id = e
                         .get("toolCallId")
                         .and_then(Value::as_str)
                         .unwrap_or("")
-                        .to_string(),
-                    name: e
+                        .to_string();
+                    let name = e
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("?")
-                        .to_string(),
-                    args: e
-                        .get("args")
-                        .map(|a| {
-                            serde_json::to_string_pretty(a).unwrap_or_else(|_| a.to_string())
-                        })
-                        .unwrap_or_default(),
-                }),
-                Some("tool.result") => items.push(CtxItem::ToolResult {
-                    id: e
+                        .to_string();
+                    call_names.insert(id.clone(), name.clone());
+                    items.push(CtxItem::ToolCall {
+                        id,
+                        name,
+                        args: e
+                            .get("args")
+                            .map(|a| {
+                                serde_json::to_string_pretty(a).unwrap_or_else(|_| a.to_string())
+                            })
+                            .unwrap_or_default(),
+                    });
+                }
+                Some("tool.result") => {
+                    let id = e
                         .get("toolCallId")
                         .and_then(Value::as_str)
                         .unwrap_or("")
-                        .to_string(),
-                    output: e
-                        .get("result")
-                        .and_then(|r| r.get("output"))
-                        .map(|o| {
-                            o.as_str()
-                                .map(str::to_string)
-                                .unwrap_or_else(|| o.to_string())
-                        })
-                        .unwrap_or_default(),
-                }),
+                        .to_string();
+                    let name = call_names.get(&id).cloned();
+                    items.push(CtxItem::ToolResult {
+                        id,
+                        name,
+                        output: e
+                            .get("result")
+                            .and_then(|r| r.get("output"))
+                            .map(|o| {
+                                o.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| o.to_string())
+                            })
+                            .unwrap_or_default(),
+                    });
+                }
                 _ => {} // step.begin 等不进消息序列
             }
         }
@@ -372,7 +421,7 @@ pub fn build_request_body(doc: &JsonlDocument, request_line: usize) -> Option<Va
                     "function": {"name": name, "arguments": args},
                 }));
             }
-            CtxItem::ToolResult { id, output } => {
+            CtxItem::ToolResult { id, output, .. } => {
                 flush_assistant!();
                 messages.push(
                     serde_json::json!({"role": "tool", "tool_call_id": id, "content": output}),
@@ -427,17 +476,19 @@ pub fn estimate_message_count(items: &[CtxItem]) -> u64 {
 /// Estimate the byte size of the full request body: system prompt + tools
 /// + every message/thought/tool payload.
 pub fn estimate_context_bytes(items: &[CtxItem]) -> usize {
-    items
-        .iter()
-        .map(|it| match it {
-            CtxItem::SystemPrompt { text, .. } => text.len(),
-            CtxItem::ToolsDef { text, .. } => text.len(),
-            CtxItem::Message { text, .. } => text.len(),
-            CtxItem::Think(s) | CtxItem::Text(s) => s.len(),
-            CtxItem::ToolCall { args, .. } => args.len(),
-            CtxItem::ToolResult { output, .. } => output.len(),
-        })
-        .sum()
+    items.iter().map(ctx_item_bytes).sum()
+}
+
+/// Single context item's estimated byte size.
+pub fn ctx_item_bytes(it: &CtxItem) -> usize {
+    match it {
+        CtxItem::SystemPrompt { text, .. } => text.len(),
+        CtxItem::ToolsDef { text, .. } => text.len(),
+        CtxItem::Message { text, .. } => text.len(),
+        CtxItem::Think(s) | CtxItem::Text(s) => s.len(),
+        CtxItem::ToolCall { args, .. } => args.len(),
+        CtxItem::ToolResult { output, .. } => output.len(),
+    }
 }
 
 fn extract_content_text(message: &Value) -> String {
@@ -681,5 +732,76 @@ mod tests {
         // 样例里第一个 tool.call 在 18 行（1-based），即 17（0-based）
         let tc = doc.peek_info(17);
         assert_eq!(classify(&tc.parsed), WireKind::ToolCall);
+    }
+
+    #[test]
+    fn ctx_item_role_and_side() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        let items = rebuild_context(&doc, tl[6].line_idx);
+        let mut saw_think = false;
+        let mut saw_text = false;
+        let mut saw_call = false;
+        let mut saw_result = false;
+        for it in &items {
+            match it {
+                CtxItem::SystemPrompt { .. } => {
+                    assert_eq!(it.role(), "system");
+                    assert_eq!(it.side(), Side::Host);
+                }
+                CtxItem::ToolsDef { .. } => {
+                    assert_eq!(it.role(), "tools");
+                    assert_eq!(it.side(), Side::Host);
+                }
+                CtxItem::Think(_) => {
+                    saw_think = true;
+                    assert_eq!(it.role(), "assistant");
+                    assert_eq!(it.side(), Side::Llm);
+                }
+                CtxItem::Text(_) => {
+                    saw_text = true;
+                    assert_eq!(it.role(), "assistant");
+                    assert_eq!(it.side(), Side::Llm);
+                }
+                CtxItem::ToolCall { .. } => {
+                    saw_call = true;
+                    assert_eq!(it.role(), "assistant");
+                    assert_eq!(it.side(), Side::Llm);
+                }
+                CtxItem::ToolResult { .. } => {
+                    saw_result = true;
+                    assert_eq!(it.role(), "tool");
+                    assert_eq!(it.side(), Side::Host);
+                }
+                CtxItem::Message { role, .. } => {
+                    assert_eq!(it.role(), role.as_str());
+                    let expect = if role == "assistant" { Side::Llm } else { Side::Host };
+                    assert_eq!(it.side(), expect);
+                }
+            }
+        }
+        assert!(saw_think && saw_text && saw_call && saw_result);
+    }
+
+    #[test]
+    fn tool_result_carries_paired_tool_name() {
+        let doc = sample_doc();
+        let tl = timeline(&doc);
+        let items = rebuild_context(&doc, tl[6].line_idx);
+        let mut names: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        for it in &items {
+            match it {
+                CtxItem::ToolCall { id, name, .. } => {
+                    names.insert(id.as_str(), name.as_str());
+                }
+                CtxItem::ToolResult { id, name, .. } => {
+                    let expect = names.get(id.as_str()).copied().expect("result 应有配对 call");
+                    assert_eq!(name.as_deref(), Some(expect), "result 应带上配对工具名");
+                }
+                _ => {}
+            }
+        }
+        assert!(!names.is_empty());
     }
 }
