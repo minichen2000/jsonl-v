@@ -23,9 +23,13 @@
 
 ## 记录文件维护约定
 
-- `PROGRESS.md`（中文）：进度、待办、已知坑；`CHANGELOG.md`（英文）：按版本记录变更。
-- 每次完成任务或发现新待办/新坑时，同步更新 `PROGRESS.md`；影响用户的改动同步写入 `CHANGELOG.md` 的 Unreleased 段。
-- 架构决策、新依赖、新踩坑同步更新本文件。
+每次完成任务/有改动时，同步更新相关记录文件，不要只改代码：
+
+- `PROGRESS.md`（中文）：进度、待办、已知坑
+- `CHANGELOG.md`（英文）：影响用户的改动记入 Unreleased 段
+- `AGENTS.md`：架构决策、新依赖、新踩坑、流程变化
+- `README.md` / `README.zh-CN.md`：功能特性、用法变化时同步
+- `BUILDING.md` / `BUILDING.zh-CN.md`：构建、测试、发版流程变化时同步
 
 ## egui 踩坑记录
 
