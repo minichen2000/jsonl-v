@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-27
+
 ### Changed
 
 - Startup main window height now reserves an extra taskbar's height at the bottom (~48 logical px more), so with the Windows taskbar visible the window no longer hugs the bottom edge
