@@ -39,4 +39,4 @@
 - TextEdit 右键按下会清空选区：见 `app.rs::show_editable_text` 的预垫高亮 + 还原选区处理。
 - `Window::fixed_size` 设的是内容区尺寸：全屏窗口用 `app.rs::maximized_pos_size` 扣减标题栏与边框。
 - 整块区域垫底背景：渲染前 `painter().add(Shape::Noop)` 占槽、渲染完 `painter().set` 回填 `rect_filled`（egui `Frame::show` 同款），无单帧闪烁；重建页签游标行/命中行底色见 `app.rs::show_rebuild`。
-- 后置 `ui.interact` 会盖住块内按钮抢点击：整行点击判定改用原始输入（`primary_clicked` + 指针在块矩形内 + 块内按钮 pending 标志未变），见 `show_rebuild`。
+- 块级点击别用原始输入判定（`primary_clicked` + 指针位置）：它绕过 egui 命中测试，上层弹窗、同层面板的搜索框的点击都会漏击穿行。正确做法：用上一帧块矩形提前 `ui.interact(rect, id, Sense::click())`（先挂交互、后画子控件，子按钮与上层窗口自然盖住它），见 `app.rs::show_rebuild`。

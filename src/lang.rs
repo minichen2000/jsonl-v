@@ -77,6 +77,7 @@ pub struct T {
     pub rebuild_search_hint: &'static str,
     pub prev_match_tip: &'static str,
     pub next_match_tip: &'static str,
+    pub search_clear_tip: &'static str,
     // 文本查看窗口
     pub wrap_toggle: &'static str,
     pub copy_all: &'static str,
@@ -152,6 +153,7 @@ const ZH: T = T {
     rebuild_search_hint: "搜索上下文…",
     prev_match_tip: "上一个命中 (Shift+Enter)",
     next_match_tip: "下一个命中 (Enter)",
+    search_clear_tip: "清空搜索",
     wrap_toggle: "自动换行",
     copy_all: "复制全部",
     copy_selection: "拷贝",
@@ -223,6 +225,7 @@ const EN: T = T {
     rebuild_search_hint: "Search context…",
     prev_match_tip: "Previous hit (Shift+Enter)",
     next_match_tip: "Next hit (Enter)",
+    search_clear_tip: "Clear search",
     wrap_toggle: "Word wrap",
     copy_all: "Copy all",
     copy_selection: "Copy",

@@ -27,7 +27,7 @@
 - **egui TextEdit 右键按下会清空选区**（`any_pressed` 判定）：`show_editable_text` 里用上一帧缓存 galley 预垫高亮 + 事后还原选区防闪烁，改动该区域代码前先读懂注释。
 - **egui `Window::fixed_size` 是内容区尺寸**：全屏窗口位置尺寸要用 `app.rs::maximized_pos_size` 按公式扣掉标题栏和边框，否则右边/下边超出屏幕。
 - **egui 整块区域垫底背景无闪烁画法**：渲染内容前 `painter().add(Shape::Noop)` 占槽，内容渲染完拿到块矩形后 `painter().set(slot, Shape::rect_filled(..))` 回填——背景垫在内容之下且无单帧闪烁（egui `Frame::show` 内部同款技巧，重建页签的游标行/命中行底色就是这么画的，见 `app.rs::show_rebuild`）。
-- **egui 后加的交互矩形会盖住先加的子控件**：想给整块区域挂点击又要保住块内按钮，不能用 `ui.interact` 后置覆盖；改用原始输入判定（`primary_clicked` + 指针在块矩形内 + 块内按钮的 pending 标志未变），见 `show_rebuild` 的「点行标记」。
+- **egui 块级点击别用原始输入判定**（`primary_clicked` + 指针在块矩形内）：绕过命中测试，上层弹窗/搜索框的点击会漏击穿行。正确做法：上一帧块矩形提前 `ui.interact`（先挂交互后画子控件），见 `app.rs::show_rebuild`。
 - **深色模式黑阴影无层次**：`popup_frame` 在深色下改用亮描边 + 淡白泛光。
 - Windows 图标由 `build.rs` 内嵌，`assets/icon.ico` 缺失时静默跳过。
 - Release 只认 GitHub 的 tag CI；平时推 main 不出包。

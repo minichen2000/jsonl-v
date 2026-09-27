@@ -131,6 +131,9 @@ pub struct JsonlApp {
     rebuild_matches: Vec<wire::RebuildMatch>,
     rebuild_match_key: Option<(usize, String, bool)>,
     rebuild_cur: Option<usize>,
+    // 重建页签滚动区：上一帧视口矩形（悬停判定）+ 待应用的键盘滚动量
+    rebuild_scroll_rect: Option<egui::Rect>,
+    rebuild_key_scroll: f32,
     // 长文本窗口
     text_windows: Vec<TextViewWindow>,
     // 结构化 JSON 窗口（请求体重建）
@@ -182,6 +185,8 @@ impl JsonlApp {
             rebuild_matches: Vec::new(),
             rebuild_match_key: None,
             rebuild_cur: None,
+            rebuild_scroll_rect: None,
+            rebuild_key_scroll: 0.0,
             text_windows: Vec::new(),
             json_windows: Vec::new(),
             next_win_id: 0,
@@ -588,17 +593,43 @@ impl JsonlApp {
         if copy {
             self.copy_current_pretty(ctx);
         }
-        if up {
-            self.move_selection(-1);
-        }
-        if down {
-            self.move_selection(1);
-        }
-        if pgup {
-            self.move_selection(-30);
-        }
-        if pgdn {
-            self.move_selection(30);
+        // 指针悬停在「完整上下文」重建视图上时，方向键/翻页键滚动重建视图，
+        // 而不是移动左侧行列表的选择（焦点在哪边，键就作用在哪边）
+        let rebuild_hover = self.tab == DetailTab::Rebuild
+            && self
+                .rebuild_scroll_rect
+                .is_some_and(|r| ctx.pointer_hover_pos().is_some_and(|p| r.contains(p)));
+        if rebuild_hover {
+            let step = self.row_h();
+            let page = self
+                .rebuild_scroll_rect
+                .map(|r| r.height())
+                .unwrap_or(400.0);
+            if up {
+                self.rebuild_key_scroll -= step;
+            }
+            if down {
+                self.rebuild_key_scroll += step;
+            }
+            if pgup {
+                self.rebuild_key_scroll -= page;
+            }
+            if pgdn {
+                self.rebuild_key_scroll += page;
+            }
+        } else {
+            if up {
+                self.move_selection(-1);
+            }
+            if down {
+                self.move_selection(1);
+            }
+            if pgup {
+                self.move_selection(-30);
+            }
+            if pgdn {
+                self.move_selection(30);
+            }
         }
     }
 
@@ -1290,6 +1321,16 @@ impl JsonlApp {
                     .hint_text(t.rebuild_search_hint)
                     .desired_width(160.0),
             );
+            if !self.rebuild_search.is_empty() {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                if ui
+                    .small_button("×")
+                    .on_hover_text(t.search_clear_tip)
+                    .clicked()
+                {
+                    self.rebuild_search.clear();
+                }
+            }
             if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 nav = Some(!ui.input(|i| i.modifiers.shift));
                 resp.request_focus();
@@ -1352,7 +1393,9 @@ impl JsonlApp {
         let mut pending_open: Option<(String, String)> = None;
         let mut pending_jump: Option<usize> = None;
         let mut pending_toggle: Option<usize> = None;
-        egui::ScrollArea::vertical()
+        let key_scroll = std::mem::take(&mut self.rebuild_key_scroll);
+        let scroll_out = egui::ScrollArea::vertical()
+            .id_salt(("rebuild_scroll", request_line))
             .auto_shrink([false, false])
             .show(ui, |ui| {
             let mut msg_no = 0usize;
@@ -1427,8 +1470,15 @@ impl JsonlApp {
                 let block_top = ui.cursor().top();
                 // 背景槽：块渲染完后回填 rect_filled，底色垫在内容之下（egui Frame 同款技巧）
                 let bg_slot = ui.painter().add(egui::Shape::Noop);
-                // 本块渲染前快照 pending：块内按钮接走了点击就不算「点行」
-                let pre_pending = (pending_open.is_some(), pending_jump.is_some());
+                // 行点击走 egui 命中测试：用上一帧块矩形提前挂交互——后画的块内按钮
+                // 在同层盖住它，上层弹窗/滚动区外的搜索框也会被 egui 判为点击目标，
+                // 不会像原始输入判定那样把弹窗/搜索框的点击漏击穿行
+                let row_id = egui::Id::new(("rebuild_row", request_line, idx));
+                let prev_rect = ui
+                    .ctx()
+                    .data_mut(|d| d.get_temp::<egui::Rect>(row_id));
+                let row_resp =
+                    prev_rect.map(|r| ui.interact(r, row_id, egui::Sense::click()));
                 ui.horizontal_top(|ui| {
                     // 条目序号（行号）
                     ui.label(
@@ -1675,18 +1725,24 @@ impl JsonlApp {
                 if scroll_target == Some(idx) {
                     ui.scroll_to_rect(block_rect, Some(egui::Align::Center));
                 }
-                // 点击块本体（未被块内按钮接走）→ 阅读游标移过来/再点取消
-                let clicked_here = ui.ctx().input(|i| i.pointer.primary_clicked())
-                    && ui
-                        .ctx()
-                        .pointer_interact_pos()
-                        .is_some_and(|p| block_rect.contains(p))
-                    && pre_pending == (pending_open.is_some(), pending_jump.is_some());
-                if clicked_here {
+                // 记录块矩形供下一帧挂交互；被 egui 判给本行的点击 → 游标移动/取消
+                ui.ctx().data_mut(|d| d.insert_temp(row_id, block_rect));
+                if row_resp.is_some_and(|r| r.clicked()) {
                     pending_toggle = Some(idx);
                 }
             }
         });
+        // 记下视口矩形（悬停判方向键用）；应用本帧键盘滚动量
+        self.rebuild_scroll_rect = Some(scroll_out.inner_rect);
+        if key_scroll != 0.0 {
+            if let Some(mut state) =
+                egui::containers::scroll_area::State::load(ui.ctx(), scroll_out.id)
+            {
+                let max_y = (scroll_out.content_size.y - scroll_out.inner_rect.height()).max(0.0);
+                state.offset.y = (state.offset.y + key_scroll).clamp(0.0, max_y);
+                state.store(ui.ctx(), scroll_out.id);
+            }
+        }
         if let Some(idx) = pending_toggle {
             if self.rebuild_cursor.get(&request_line) == Some(&idx) {
                 self.rebuild_cursor.remove(&request_line);
