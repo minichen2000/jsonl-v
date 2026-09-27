@@ -123,6 +123,14 @@ pub struct JsonlApp {
     // 详情
     tab: DetailTab,
     rebuild_cache: Option<(usize, Vec<CtxItem>, u64, usize, SideStat)>,
+    // 重建页签：阅读游标 request_line → 条目序号（单行标记，点别的行移过去，再点取消）
+    rebuild_cursor: std::collections::HashMap<usize, usize>,
+    // 重建页签内搜索：只搜界面可见文本（长文本只搜截断预览）
+    rebuild_search: String,
+    rebuild_case: bool,
+    rebuild_matches: Vec<wire::RebuildMatch>,
+    rebuild_match_key: Option<(usize, String, bool)>,
+    rebuild_cur: Option<usize>,
     // 长文本窗口
     text_windows: Vec<TextViewWindow>,
     // 结构化 JSON 窗口（请求体重建）
@@ -168,6 +176,12 @@ impl JsonlApp {
             last_row_range: None,
             tab: DetailTab::Tree,
             rebuild_cache: None,
+            rebuild_cursor: std::collections::HashMap::new(),
+            rebuild_search: String::new(),
+            rebuild_case: false,
+            rebuild_matches: Vec::new(),
+            rebuild_match_key: None,
+            rebuild_cur: None,
             text_windows: Vec::new(),
             json_windows: Vec::new(),
             next_win_id: 0,
@@ -274,6 +288,7 @@ impl JsonlApp {
                 self.event_filter = EventFilter::All;
                 self.filter_indices = None;
                 self.rebuild_cache = None;
+                self.clear_rebuild_view();
                 self.detail_cache = None;
                 self.tab = DetailTab::Tree;
                 self.visible_dirty = true;
@@ -301,6 +316,7 @@ impl JsonlApp {
                     Vec::new()
                 };
                 self.rebuild_cache = None;
+                self.clear_rebuild_view();
                 self.detail_cache = None;
                 if let Some(sel) = self.selected {
                     if sel >= lines {
@@ -314,6 +330,15 @@ impl JsonlApp {
             Ok(false) => self.status = self.t().no_change(),
             Err(e) => self.status = self.t().reload_failed(e),
         }
+    }
+
+    /// 换文件/重载时清空重建页签的视图状态（阅读游标、页签内搜索）
+    fn clear_rebuild_view(&mut self) {
+        self.rebuild_cursor.clear();
+        self.rebuild_search.clear();
+        self.rebuild_matches.clear();
+        self.rebuild_match_key = None;
+        self.rebuild_cur = None;
     }
 
     // ---- 搜索 ----
@@ -1256,15 +1281,82 @@ impl JsonlApp {
             }
         });
         ui.separator();
+        // ---- 页签内搜索条（只搜界面可见文本：短条目全文 + 长条目的截断预览）----
+        let mut nav: Option<bool> = None; // true=下一个 false=上一个
+        ui.horizontal(|ui| {
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.rebuild_search)
+                    .hint_text(t.rebuild_search_hint)
+                    .desired_width(160.0),
+            );
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                nav = Some(!ui.input(|i| i.modifiers.shift));
+                resp.request_focus();
+            }
+            if ui
+                .selectable_label(self.rebuild_case, "Aa")
+                .on_hover_text(t.case_sensitive_tip)
+                .clicked()
+            {
+                self.rebuild_case = !self.rebuild_case;
+            }
+            if !self.rebuild_search.trim().is_empty() {
+                let cur_disp = self.rebuild_cur.map(|c| c + 1).unwrap_or(0);
+                ui.label(
+                    RichText::new(format!("{cur_disp}/{}", self.rebuild_matches.len()))
+                        .color(Color32::GRAY),
+                );
+                if ui.small_button("↑").on_hover_text(t.prev_match_tip).clicked() {
+                    nav = Some(false);
+                }
+                if ui.small_button("↓").on_hover_text(t.next_match_tip).clicked() {
+                    nav = Some(true);
+                }
+            }
+        });
+        // 查询 / 请求行 / 大小写任一变化即重算命中（可见文本量小，UI 线程同步算）
+        let query = self.rebuild_search.trim().to_string();
+        let key = (request_line, query.clone(), self.rebuild_case);
+        if self.rebuild_match_key.as_ref() != Some(&key) {
+            self.rebuild_matches = wire::find_rebuild_matches(items, &query, self.rebuild_case);
+            self.rebuild_match_key = Some(key);
+            self.rebuild_cur = None;
+        }
+        // 上/下一个：回绕定位；本帧有导航动作时渲染到目标块后 scroll_to_rect
+        if let Some(forward) = nav {
+            let n = self.rebuild_matches.len();
+            if n > 0 {
+                let c = match (self.rebuild_cur, forward) {
+                    (None, true) => 0,
+                    (None, false) => n - 1,
+                    (Some(c), true) => (c + 1) % n,
+                    (Some(c), false) => (c + n - 1) % n,
+                };
+                self.rebuild_cur = Some(c);
+            }
+        }
+        if self.rebuild_matches.is_empty() {
+            self.rebuild_cur = None;
+        }
         let fs = self.fs_list();
+        let matches = &self.rebuild_matches;
+        let cur = self.rebuild_cur;
+        let cursor = self.rebuild_cursor.get(&request_line).copied();
+        let scroll_target = if nav.is_some() {
+            cur.map(|c| matches[c].item)
+        } else {
+            None
+        };
+        let dark = ui.visuals().dark_mode;
         let mut pending_open: Option<(String, String)> = None;
         let mut pending_jump: Option<usize> = None;
+        let mut pending_toggle: Option<usize> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
             let mut msg_no = 0usize;
             let mut prev_side: Option<Side> = None;
-            for item in items {
+            for (idx, item) in items.iter().enumerate() {
                 let side = item.side();
                 let role = item.role();
                 let (side_icon, side_short, side_color) = match side {
@@ -1305,6 +1397,45 @@ impl JsonlApp {
                     });
                     prev_side = Some(side);
                 }
+                // 本条目命中拆分：标题命中 → 标题整段加底色；内容命中 → 精确区间高亮
+                let title_len = item.search_parts().0.len();
+                let mut title_hit_cur = false;
+                let mut title_hit = false;
+                let mut content_hits: Vec<(usize, usize, bool)> = Vec::new();
+                for (mi, m) in matches.iter().enumerate() {
+                    if m.item != idx {
+                        continue;
+                    }
+                    let is_cur = cur == Some(mi);
+                    if m.start < title_len {
+                        title_hit = true;
+                        title_hit_cur |= is_cur;
+                    } else {
+                        content_hits.push((m.start - title_len - 1, m.end - title_len - 1, is_cur));
+                    }
+                }
+                let title_bg = if title_hit {
+                    Some(if title_hit_cur {
+                        rebuild_cur_bg(dark)
+                    } else {
+                        rebuild_hit_bg(dark)
+                    })
+                } else {
+                    None
+                };
+                let block_top = ui.cursor().top();
+                // 背景槽：块渲染完后回填 rect_filled，底色垫在内容之下（egui Frame 同款技巧）
+                let bg_slot = ui.painter().add(egui::Shape::Noop);
+                // 本块渲染前快照 pending：块内按钮接走了点击就不算「点行」
+                let pre_pending = (pending_open.is_some(), pending_jump.is_some());
+                ui.horizontal_top(|ui| {
+                    // 条目序号（行号）
+                    ui.label(
+                        RichText::new(format!("{:>2}", idx + 1))
+                            .font(FontId::new(fs - 2.0, FontFamily::Monospace))
+                            .color(Color32::GRAY),
+                    );
+                    ui.vertical(|ui| {
                 match item {
                     CtxItem::SystemPrompt { line_idx, text } => {
                         ui.horizontal(|ui| {
@@ -1315,19 +1446,21 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(
+                            ui.label(with_bg(
                                 RichText::new(t.sys_prompt_label).color(KIND_USAGE).strong(),
-                            );
+                                title_bg,
+                            ));
                             if ui.small_button(t.jump_to_source).clicked() {
                                 pending_jump = Some(*line_idx);
                             }
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             text,
                             &t.sys_prompt_title(line_idx + 1),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
@@ -1345,21 +1478,23 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(
+                            ui.label(with_bg(
                                 RichText::new(t.tools_def_label(*tool_count))
                                     .color(KIND_USAGE)
                                     .strong(),
-                            );
+                                title_bg,
+                            ));
                             if ui.small_button(t.jump_to_source).clicked() {
                                 pending_jump = Some(*line_idx);
                             }
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             text,
                             &t.tools_def_title(line_idx + 1),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
@@ -1391,18 +1526,20 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(
+                            ui.label(with_bg(
                                 RichText::new(format!("#{msg_no} {role}{origin_tag}"))
                                     .color(color)
                                     .strong(),
-                            );
+                                title_bg,
+                            ));
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             text,
                             &t.msg_title(request_line + 1, msg_no),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
@@ -1416,14 +1553,18 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(RichText::new(t.think_label).color(KIND_THINK).strong());
+                            ui.label(with_bg(
+                                RichText::new(t.think_label).color(KIND_THINK).strong(),
+                                title_bg,
+                            ));
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             txt,
                             &format!("L{} think", request_line + 1),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
@@ -1437,14 +1578,18 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(RichText::new(t.text_label).color(KIND_TEXT).strong());
+                            ui.label(with_bg(
+                                RichText::new(t.text_label).color(KIND_TEXT).strong(),
+                                title_bg,
+                            ));
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             txt,
                             &format!("L{} text", request_line + 1),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
@@ -1458,18 +1603,20 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(
+                            ui.label(with_bg(
                                 RichText::new(format!("🔧 {name}  ({id})"))
                                     .color(KIND_TOOL_CALL)
                                     .strong(),
-                            );
+                                title_bg,
+                            ));
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             args,
                             &t.tool_args_title(request_line + 1, name),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
@@ -1487,22 +1634,65 @@ impl JsonlApp {
                                     .strong(),
                             );
                             ui.label(RichText::new(&badge).color(Color32::GRAY).small());
-                            ui.label(RichText::new(title).color(KIND_TOOL_RESULT));
+                            ui.label(with_bg(
+                                RichText::new(title).color(KIND_TOOL_RESULT),
+                                title_bg,
+                            ));
                         });
-                        if let Some(a) = text_with_view_button(
+                        if let Some(a) = text_with_view_button_hl(
                             ui,
                             output,
                             &t.tool_result_title(request_line + 1),
                             fs,
                             t,
+                            &content_hits,
                         ) {
                             pending_open = Some(a);
                         }
                     }
                 }
                 ui.add_space(4.0);
+                    });
+                });
+                let clip = ui.clip_rect();
+                let block_rect = egui::Rect::from_min_max(
+                    egui::pos2(clip.left(), block_top),
+                    egui::pos2(clip.right(), ui.cursor().top()),
+                );
+                // 阅读游标行底色优先；当前命中所在条目给淡底色
+                if cursor == Some(idx) {
+                    ui.painter().set(
+                        bg_slot,
+                        egui::Shape::rect_filled(block_rect, 2.0, rebuild_cursor_bg(dark)),
+                    );
+                } else if cur.is_some_and(|c| matches[c].item == idx) {
+                    ui.painter().set(
+                        bg_slot,
+                        egui::Shape::rect_filled(block_rect, 2.0, rebuild_cur_item_bg(dark)),
+                    );
+                }
+                if scroll_target == Some(idx) {
+                    ui.scroll_to_rect(block_rect, Some(egui::Align::Center));
+                }
+                // 点击块本体（未被块内按钮接走）→ 阅读游标移过来/再点取消
+                let clicked_here = ui.ctx().input(|i| i.pointer.primary_clicked())
+                    && ui
+                        .ctx()
+                        .pointer_interact_pos()
+                        .is_some_and(|p| block_rect.contains(p))
+                    && pre_pending == (pending_open.is_some(), pending_jump.is_some());
+                if clicked_here {
+                    pending_toggle = Some(idx);
+                }
             }
         });
+        if let Some(idx) = pending_toggle {
+            if self.rebuild_cursor.get(&request_line) == Some(&idx) {
+                self.rebuild_cursor.remove(&request_line);
+            } else {
+                self.rebuild_cursor.insert(request_line, idx);
+            }
+        }
         if let Some((title, content)) = pending_open {
             self.open_text_window(title, content);
         }
@@ -1663,6 +1853,216 @@ fn text_with_view_button(
         open
     } else if !text.is_empty() {
         ui.label(RichText::new(text).font(FontId::new(font_size - 1.0, FontFamily::Monospace)));
+        None
+    } else {
+        None
+    }
+}
+
+/// RichText 条件加背景色（搜索命中标题整段标底色用）
+fn with_bg(rt: RichText, bg: Option<Color32>) -> RichText {
+    match bg {
+        Some(bg) => rt.background_color(bg),
+        None => rt,
+    }
+}
+
+/// 重建页签：阅读游标行底色
+fn rebuild_cursor_bg(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0x2e, 0x3f, 0x5c)
+    } else {
+        Color32::from_rgb(0xd7, 0xe5, 0xf7)
+    }
+}
+
+/// 重建页签搜索：普通命中底色
+fn rebuild_hit_bg(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0x4a, 0x3f, 0x1a)
+    } else {
+        Color32::from_rgb(0xff, 0xee, 0xa9)
+    }
+}
+
+/// 重建页签搜索：当前命中底色
+fn rebuild_cur_bg(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0x7a, 0x5c, 0x14)
+    } else {
+        Color32::from_rgb(0xff, 0xd2, 0x4d)
+    }
+}
+
+/// 重建页签搜索：当前命中所在条目整行底色（比游标淡）
+fn rebuild_cur_item_bg(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0x33, 0x30, 0x20)
+    } else {
+        Color32::from_rgb(0xfb, 0xf3, 0xd5)
+    }
+}
+
+fn hl_format(font: &FontId, color: Color32, background: Color32) -> egui::TextFormat {
+    egui::TextFormat {
+        font_id: font.clone(),
+        color,
+        background,
+        ..Default::default()
+    }
+}
+
+/// 短文本内容：按命中区间切段的 LayoutJob（当前命中用更亮底色）。
+/// hits 为 (起, 止, 是否当前命中)，升序不重叠，字节下标会先收拢到字符边界。
+fn highlighted_job(
+    text: &str,
+    hits: &[(usize, usize, bool)],
+    font: FontId,
+    color: Color32,
+    dark: bool,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut pos = 0usize;
+    for &(s, e, is_cur) in hits {
+        let s = wire::clamp_char_boundary(text, s).max(pos);
+        let e = wire::clamp_char_boundary(text, e);
+        if e <= s {
+            continue;
+        }
+        if s > pos {
+            job.append(
+                &text[pos..s],
+                0.0,
+                hl_format(&font, color, Color32::TRANSPARENT),
+            );
+        }
+        let bg = if is_cur {
+            rebuild_cur_bg(dark)
+        } else {
+            rebuild_hit_bg(dark)
+        };
+        job.append(&text[s..e], 0.0, hl_format(&font, color, bg));
+        pos = e;
+    }
+    if pos < text.len() {
+        job.append(
+            &text[pos..],
+            0.0,
+            hl_format(&font, color, Color32::TRANSPARENT),
+        );
+    }
+    job
+}
+
+/// 生成 text_with_view_button 同款单行预览（\n 显示为 \\n），
+/// 并返回原文字节下标 → 预览串字节下标的单调映射（含结尾边界），
+/// 供把命中区间换算到预览串坐标。
+fn build_preview(text: &str, max_chars: usize) -> (String, Vec<(usize, usize)>) {
+    let mut s = String::new();
+    let mut map = Vec::new();
+    for (ob, ch) in text.char_indices().take(max_chars) {
+        map.push((ob, s.len()));
+        if ch == '\n' {
+            s.push_str("\\n");
+        } else {
+            s.push(ch);
+        }
+    }
+    let end_ob = text
+        .char_indices()
+        .nth(max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len());
+    map.push((end_ob, s.len()));
+    (s, map)
+}
+
+/// 原文字节下标 → 预览串字节下标；超出预览范围的收拢到预览末尾。
+fn map_offset(map: &[(usize, usize)], ob: usize) -> usize {
+    match map.binary_search_by_key(&ob, |&(o, _)| o) {
+        Ok(i) => map[i].1,
+        Err(i) => {
+            if i == 0 {
+                0
+            } else {
+                map[i - 1].1
+            }
+        }
+    }
+}
+
+/// text_with_view_button 的搜索高亮版：hits 为空时完全走原逻辑；
+/// 长文本只高亮落在预览串内的命中（被截掉的全文本来也不参与搜索）。
+fn text_with_view_button_hl(
+    ui: &mut Ui,
+    text: &str,
+    title: &str,
+    font_size: f32,
+    t: &T,
+    hits: &[(usize, usize, bool)],
+) -> Option<(String, String)> {
+    if hits.is_empty() {
+        return text_with_view_button(ui, text, title, font_size, t);
+    }
+    let dark = ui.visuals().dark_mode;
+    let font = FontId::new(font_size - 1.0, FontFamily::Monospace);
+    if is_long_text(text) {
+        let mut open = None;
+        ui.horizontal(|ui| {
+            // 与 text_with_view_button 相同的截断策略
+            let reserve = font_size * 10.0;
+            let avail = (ui.available_width() - reserve).max(font_size * 8.0);
+            let max_chars = ((avail / font_size) as usize).min(wire::SEARCH_PREVIEW_CHARS);
+            let (preview, map) = build_preview(text, max_chars);
+            let mut job = egui::text::LayoutJob::default();
+            let mut pos = 0usize;
+            for &(s, e, is_cur) in hits {
+                let ds = map_offset(&map, wire::clamp_char_boundary(text, s));
+                let de = map_offset(&map, wire::clamp_char_boundary(text, e));
+                if de <= ds {
+                    continue; // 命中完全在预览之外
+                }
+                if ds > pos {
+                    job.append(
+                        &preview[pos..ds],
+                        0.0,
+                        hl_format(&font, Color32::GRAY, Color32::TRANSPARENT),
+                    );
+                }
+                let bg = if is_cur {
+                    rebuild_cur_bg(dark)
+                } else {
+                    rebuild_hit_bg(dark)
+                };
+                job.append(&preview[ds..de], 0.0, hl_format(&font, Color32::GRAY, bg));
+                pos = de;
+            }
+            if pos < preview.len() {
+                job.append(
+                    &preview[pos..],
+                    0.0,
+                    hl_format(&font, Color32::GRAY, Color32::TRANSPARENT),
+                );
+            }
+            job.append(
+                "…",
+                0.0,
+                hl_format(&font, Color32::GRAY, Color32::TRANSPARENT),
+            );
+            ui.label(job);
+            if ui.small_button(t.view_text_btn).clicked() {
+                open = Some((title.to_string(), text.to_string()));
+            }
+        });
+        open
+    } else if !text.is_empty() {
+        ui.label(highlighted_job(
+            text,
+            hits,
+            font,
+            ui.visuals().text_color(),
+            dark,
+        ));
         None
     } else {
         None

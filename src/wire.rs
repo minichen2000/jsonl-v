@@ -200,6 +200,93 @@ impl CtxItem {
             _ => Side::Host,
         }
     }
+
+    /// 页签内搜索用的「可见文本」：标题（role/工具名/id 等，与语言无关）
+    /// + 界面上实际显示的内容。短文本给全文；长文本（is_long_text）只给与
+    /// 截断预览一致的前 SEARCH_PREVIEW_CHARS 个字符——被截掉的全文不参与搜索。
+    pub fn search_parts(&self) -> (String, String) {
+        let (title, content) = match self {
+            CtxItem::SystemPrompt { text, .. } => ("system".to_string(), text.as_str()),
+            CtxItem::ToolsDef { text, .. } => ("tools".to_string(), text.as_str()),
+            CtxItem::Message { role, text, .. } => (role.clone(), text.as_str()),
+            CtxItem::Think(t) => ("think".to_string(), t.as_str()),
+            CtxItem::Text(t) => ("text".to_string(), t.as_str()),
+            CtxItem::ToolCall { id, name, args } => (format!("{name} ({id})"), args.as_str()),
+            CtxItem::ToolResult { id, name, output } => {
+                let title = match name {
+                    Some(n) => format!("{n} result ({id})"),
+                    None => format!("result ({id})"),
+                };
+                (title, output.as_str())
+            }
+        };
+        let visible: String = if crate::text_view::is_long_text(content) {
+            content.chars().take(SEARCH_PREVIEW_CHARS).collect()
+        } else {
+            content.to_string()
+        };
+        (title, visible)
+    }
+}
+
+/// 长文本条目参与搜索的预览字符数上限，与 app.rs `text_with_view_button`
+/// 的截断上限保持一致（那边还按宽度进一步截短，这里取固定上限）。
+pub const SEARCH_PREVIEW_CHARS: usize = 160;
+
+/// 一次命中：条目下标 + 在「标题\n内容」合并串上的字节区间。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RebuildMatch {
+    pub item: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// 把（可能因 lowercase 长度变化而偏移的）字节下标收拢到字符边界。
+pub fn clamp_char_boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// 在所有条目的可见文本（search_parts）里找 query 的全部命中，按条目顺序返回。
+pub fn find_rebuild_matches(
+    items: &[CtxItem],
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<RebuildMatch> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let (title, content) = item.search_parts();
+        let hay = format!("{title}\n{content}");
+        if case_sensitive {
+            for (s, m) in hay.match_indices(q) {
+                out.push(RebuildMatch {
+                    item: i,
+                    start: s,
+                    end: s + m.len(),
+                });
+            }
+        } else {
+            // to_lowercase 对个别 Unicode 字符会改变字节长度，下标只用于
+            // 定位命中，渲染切片前必须过 clamp_char_boundary
+            let hay_l = hay.to_lowercase();
+            let q_l = q.to_lowercase();
+            for (s, m) in hay_l.match_indices(&q_l) {
+                out.push(RebuildMatch {
+                    item: i,
+                    start: s,
+                    end: s + m.len(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Rebuild the approximate messages array actually sent by the request at
@@ -803,5 +890,50 @@ mod tests {
             }
         }
         assert!(!names.is_empty());
+    }
+
+    #[test]
+    fn find_matches_across_title_and_content() {
+        let items = vec![
+            CtxItem::Message {
+                role: "user".into(),
+                text: "帮我看看 Bash 脚本".into(),
+                origin: None,
+            },
+            CtxItem::ToolCall {
+                id: "call_1".into(),
+                name: "Bash".into(),
+                args: "ls -la".into(),
+            },
+            CtxItem::Think("思考一下 bash 的用法".into()),
+        ];
+        // 大小写不敏感：标题、内容、跨条目各命中一次
+        let m = find_rebuild_matches(&items, "bash", false);
+        assert_eq!(m.len(), 3);
+        assert_eq!((m[0].item, m[0].start), (0, "user\n".len() + "帮我看看 ".len()));
+        assert_eq!((m[1].item, m[1].start), (1, 0)); // 标题开头
+        assert_eq!(m[2].item, 2);
+        // 大小写敏感：只剩标题里的 "Bash"
+        let m = find_rebuild_matches(&items, "Bash", true);
+        assert_eq!(m.len(), 2);
+        // 空查询
+        assert!(find_rebuild_matches(&items, "  ", false).is_empty());
+    }
+
+    #[test]
+    fn long_text_only_searches_visible_preview() {
+        let head = "x".repeat(100);
+        let tail = "y".repeat(200); // 触发 is_long_text，且目标词在 160 字符之后
+        let items = vec![CtxItem::ToolResult {
+            id: "r1".into(),
+            name: None,
+            output: format!("{head}needle{tail}needle"),
+        }];
+        // 第一次 needle 在预览内（~100），第二次在 ~307，超出 160 预览
+        let m = find_rebuild_matches(&items, "needle", true);
+        assert_eq!(m.len(), 1);
+        let (title, content) = items[0].search_parts();
+        assert_eq!(title, "result (r1)");
+        assert_eq!(content.chars().count(), SEARCH_PREVIEW_CHARS);
     }
 }

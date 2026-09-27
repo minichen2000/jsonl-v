@@ -20,5 +20,6 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Full Context (Rebuilt) tab: items are numbered; clicking an item toggles a reading marker (single-row cursor, remembered per request line, survives opening/closing text popups); the tab has its own search box scoped to the text visible on screen (long items contribute only their truncated preview) with in-place hit highlighting, title-hit background, and Enter/Shift+Enter or ↑/↓ navigation with wraparound scrolling
 - Panic hook that appends panic info and a backtrace to `crash.log` next to the config file (`%APPDATA%/jsonl-v/crash.log`); with `windows_subsystem = "windows"` UI-thread panics previously vanished silently
 - Headless regression tests for the maximize/restore flow of the JSON viewer window (direct toggle and simulated button clicks)

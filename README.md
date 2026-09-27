@@ -77,7 +77,11 @@ Enabled automatically when opening a Kimi Code session log (the status bar shows
   indented by toolCallId), with a check that the rebuilt message count matches messageCount.
   Each item carries a `〔role · side〕` badge and items are grouped under
   "🖥 Host/User side" / "🤖 LLM output" section headers, with per-side item/byte stats on the toolbar;
-  tool entries show full call ids and results are labeled with the paired tool name
+  tool entries show full call ids and results are labeled with the paired tool name.
+  Items are numbered sequentially; clicking an item toggles a reading marker (a single-row cursor
+  that survives opening/closing popups); the tab has its own search box that only searches the text
+  visible on screen (long items contribute only their truncated preview), highlighting hits in place
+  and whole titles on title hits, with `Enter`/`Shift+Enter` or the ↑/↓ buttons jumping between hits
 - **Event filter**: the dropdown in the top bar shows only the chosen event type
 
 ## Settings (menu "Settings")

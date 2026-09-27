@@ -9,7 +9,7 @@
 - JSONL 查看：行列表（行号/摘要/字节数）、JSON 可折叠树、格式化文本/原始行页签
 - 长字符串「纯文本查看」弹窗、请求体「JSON 查看」弹窗（树/美化双模式），弹窗均可最大化
 - 搜索：输入即搜（防抖+后台线程）、`key:value` 语法、`F3` 跳转、仅看匹配
-- wire.jsonl 增强模式：事件着色、请求时间线、完整上下文（还原）页签（分侧统计与徽标）、事件过滤
+- wire.jsonl 增强模式：事件着色、请求时间线、完整上下文（还原）页签（分侧统计与徽标、条目序号、点击行阅读标记、页签内可见文本搜索跳转）、事件过滤
 - 文本区可编辑（不保存）、右键「拷贝」菜单、内嵌 Noto Emoji 字体
 - 设置：字号/主题/语言、资源管理器右键菜单注册、最近文件
 - GitHub Actions 三平台 Release（tag 触发）
@@ -26,6 +26,8 @@
 - **egui 拖选到滚动区边缘不持续滚动**：内置 `scroll_to_rect` 只在选区变化的帧触发且无重绘循环，指针停在边缘即停。已在 `app.rs::drag_edge_autoscroll` 每帧补滚动量 + `request_repaint` 解决。
 - **egui TextEdit 右键按下会清空选区**（`any_pressed` 判定）：`show_editable_text` 里用上一帧缓存 galley 预垫高亮 + 事后还原选区防闪烁，改动该区域代码前先读懂注释。
 - **egui `Window::fixed_size` 是内容区尺寸**：全屏窗口位置尺寸要用 `app.rs::maximized_pos_size` 按公式扣掉标题栏和边框，否则右边/下边超出屏幕。
+- **egui 整块区域垫底背景无闪烁画法**：渲染内容前 `painter().add(Shape::Noop)` 占槽，内容渲染完拿到块矩形后 `painter().set(slot, Shape::rect_filled(..))` 回填——背景垫在内容之下且无单帧闪烁（egui `Frame::show` 内部同款技巧，重建页签的游标行/命中行底色就是这么画的，见 `app.rs::show_rebuild`）。
+- **egui 后加的交互矩形会盖住先加的子控件**：想给整块区域挂点击又要保住块内按钮，不能用 `ui.interact` 后置覆盖；改用原始输入判定（`primary_clicked` + 指针在块矩形内 + 块内按钮的 pending 标志未变），见 `show_rebuild` 的「点行标记」。
 - **深色模式黑阴影无层次**：`popup_frame` 在深色下改用亮描边 + 淡白泛光。
 - Windows 图标由 `build.rs` 内嵌，`assets/icon.ico` 缺失时静默跳过。
 - Release 只认 GitHub 的 tag CI；平时推 main 不出包。
