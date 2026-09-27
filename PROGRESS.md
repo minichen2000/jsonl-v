@@ -20,8 +20,10 @@
 
 ## 已知坑 / 注意事项
 
+- **eframe 跨会话持久化窗口位置/尺寸**：egui 按窗口 id 记忆，旧的记忆会盖掉 `default_size`/`default_pos`。想让新的默认生效必须换 id 盐（如 `json_view_v2`）重置记忆。
 - **egui 拖选到滚动区边缘不持续滚动**：内置 `scroll_to_rect` 只在选区变化的帧触发且无重绘循环，指针停在边缘即停。已在 `app.rs::drag_edge_autoscroll` 每帧补滚动量 + `request_repaint` 解决。
 - **egui TextEdit 右键按下会清空选区**（`any_pressed` 判定）：`show_editable_text` 里用上一帧缓存 galley 预垫高亮 + 事后还原选区防闪烁，改动该区域代码前先读懂注释。
 - **egui `Window::fixed_size` 是内容区尺寸**：全屏窗口位置尺寸要用 `app.rs::maximized_pos_size` 按公式扣掉标题栏和边框，否则右边/下边超出屏幕。
+- **深色模式黑阴影无层次**：`popup_frame` 在深色下改用亮描边 + 淡白泛光。
 - Windows 图标由 `build.rs` 内嵌，`assets/icon.ico` 缺失时静默跳过。
 - Release 只认 GitHub 的 tag CI；平时推 main 不出包。

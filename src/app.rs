@@ -773,6 +773,7 @@ impl JsonlApp {
             let title = RichText::new(t.shortcuts_title).size(self.fs_detail() + 1.0);
             egui::Window::new(title)
                 .id(egui::Id::new("shortcuts_window"))
+                .frame(popup_frame(ctx))
                 .open(&mut open)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -801,6 +802,7 @@ impl JsonlApp {
             let title = RichText::new(t.about_title).size(self.fs_detail() + 1.0);
             egui::Window::new(title)
                 .id(egui::Id::new("about_window"))
+                .frame(popup_frame(ctx))
                 .open(&mut open)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -1887,15 +1889,26 @@ fn paint_selection_highlight(
     }
 }
 
-/// 弹窗用窗口框架：默认阴影太淡，加深偏移与模糊，让窗口有浮在上层的感觉。
+/// 弹窗用窗口框架：浅色模式加深阴影（默认太淡）；深色模式黑阴影融进背景
+/// 看不出层次，改用亮色描边 + 淡白泛光营造浮起感。
 pub fn popup_frame(ctx: &egui::Context) -> egui::Frame {
     let mut frame = egui::Frame::window(&ctx.style());
-    frame.shadow = egui::epaint::Shadow {
-        offset: [6, 10],
-        blur: 20,
-        spread: 2,
-        color: Color32::from_black_alpha(96),
-    };
+    if ctx.style().visuals.dark_mode {
+        frame.stroke = egui::Stroke::new(1.0, Color32::from_gray(72));
+        frame.shadow = egui::epaint::Shadow {
+            offset: [0, 0],
+            blur: 24,
+            spread: 1,
+            color: Color32::from_white_alpha(14),
+        };
+    } else {
+        frame.shadow = egui::epaint::Shadow {
+            offset: [6, 10],
+            blur: 20,
+            spread: 2,
+            color: Color32::from_black_alpha(96),
+        };
+    }
     frame
 }
 

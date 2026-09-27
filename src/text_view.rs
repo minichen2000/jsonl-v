@@ -40,11 +40,13 @@ impl TextViewWindow {
         // 标题用与正文协调的字号，避免默认标题栏过大
         let title = RichText::new(format!("📄 {}", self.title)).size(font_size + 1.0);
         // 全屏用另一套窗口 id：egui 按 id 记忆位置尺寸，
-        // 还原时自动回到普通模式之前的位置和大小
+        // 还原时自动回到普通模式之前的位置和大小。
+        // v2 盐：eframe 跨会话持久化窗口位置尺寸，旧记忆里存着偏右的位置和
+        // 旧尺寸，default_pos/default_size 都打不进去；换盐重置，让居中默认生效
         let win_id = if self.maximized {
             egui::Id::new(("text_view_max", self.id))
         } else {
-            egui::Id::new(("text_view", self.id))
+            egui::Id::new(("text_view_v2", self.id))
         };
         let mut win = egui::Window::new(title.clone())
             .id(win_id)
@@ -57,7 +59,10 @@ impl TextViewWindow {
                 .resizable(false)
                 .collapsible(false)
         } else {
-            win.default_size([960.0, 680.0]).resizable(true)
+            let size = egui::vec2(1100.0, 680.0);
+            win.default_size(size)
+                .default_pos(ctx.screen_rect().center() - size / 2.0)
+                .resizable(true)
         };
         win.show(ctx, |ui| {
             let lines = self.content.lines().count();
