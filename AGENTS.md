@@ -40,3 +40,4 @@
 - `Window::fixed_size` 设的是内容区尺寸：全屏窗口用 `app.rs::maximized_pos_size` 扣减标题栏与边框。
 - 整块区域垫底背景：渲染前 `painter().add(Shape::Noop)` 占槽、渲染完 `painter().set` 回填 `rect_filled`（egui `Frame::show` 同款），无单帧闪烁；重建页签游标行/命中行底色见 `app.rs::show_rebuild`。
 - 块级点击别用原始输入判定（`primary_clicked` + 指针位置）：它绕过 egui 命中测试，上层弹窗、同层面板的搜索框的点击都会漏击穿行。正确做法：用上一帧块矩形提前 `ui.interact(rect, id, Sense::click())`（先挂交互、后画子控件，子按钮与上层窗口自然盖住它），见 `app.rs::show_rebuild`。
+- **egui 0.31 的 `ui.label` 默认是可选文本**（`style.interaction.selectable_labels`），拿到的是 `click_and_drag` 传感——行控件先挂交互也会被后画的 label 抢走文本上的点击（只能点空白处）。修法：行控件 clicked 之外，再用 `interaction_snapshot().clicked` + `read_response(id)` 看被点控件是否落在行矩形内且同层；拖选文本是 drag 不算 click，天然不误触，见 `show_rebuild`。

@@ -28,6 +28,7 @@
 - **egui `Window::fixed_size` 是内容区尺寸**：全屏窗口位置尺寸要用 `app.rs::maximized_pos_size` 按公式扣掉标题栏和边框，否则右边/下边超出屏幕。
 - **egui 整块区域垫底背景无闪烁画法**：渲染内容前 `painter().add(Shape::Noop)` 占槽，内容渲染完拿到块矩形后 `painter().set(slot, Shape::rect_filled(..))` 回填——背景垫在内容之下且无单帧闪烁（egui `Frame::show` 内部同款技巧，重建页签的游标行/命中行底色就是这么画的，见 `app.rs::show_rebuild`）。
 - **egui 块级点击别用原始输入判定**（`primary_clicked` + 指针在块矩形内）：绕过命中测试，上层弹窗/搜索框的点击会漏击穿行。正确做法：上一帧块矩形提前 `ui.interact`（先挂交互后画子控件），见 `app.rs::show_rebuild`。
+- **egui 0.31 的 `ui.label` 默认可选文本（click_and_drag 传感）**：会抢走先挂的行交互在文本上的点击，只剩空白处可点。修法：行 clicked 之外用 `interaction_snapshot().clicked` + `read_response` 判定被点控件是否在行矩形内且同层（`show_rebuild`）；拖选是 drag 不算 click，不误触。
 - **深色模式黑阴影无层次**：`popup_frame` 在深色下改用亮描边 + 淡白泛光。
 - Windows 图标由 `build.rs` 内嵌，`assets/icon.ico` 缺失时静默跳过。
 - Release 只认 GitHub 的 tag CI；平时推 main 不出包。

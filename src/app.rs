@@ -1348,10 +1348,11 @@ impl JsonlApp {
                     RichText::new(format!("{cur_disp}/{}", self.rebuild_matches.len()))
                         .color(Color32::GRAY),
                 );
-                if ui.small_button("↑").on_hover_text(t.prev_match_tip).clicked() {
+                if ui.button(" ↑ ").on_hover_text(t.prev_match_tip).clicked() {
                     nav = Some(false);
                 }
-                if ui.small_button("↓").on_hover_text(t.next_match_tip).clicked() {
+                ui.add_space(10.0);
+                if ui.button(" ↓ ").on_hover_text(t.next_match_tip).clicked() {
                     nav = Some(true);
                 }
             }
@@ -1479,6 +1480,8 @@ impl JsonlApp {
                     .data_mut(|d| d.get_temp::<egui::Rect>(row_id));
                 let row_resp =
                     prev_rect.map(|r| ui.interact(r, row_id, egui::Sense::click()));
+                // 块内按钮（跳至源行/查看文本）接走的点击不算「点行」
+                let pre_pending = (pending_open.is_some(), pending_jump.is_some());
                 ui.horizontal_top(|ui| {
                     // 条目序号（行号）
                     ui.label(
@@ -1725,9 +1728,23 @@ impl JsonlApp {
                 if scroll_target == Some(idx) {
                     ui.scroll_to_rect(block_rect, Some(egui::Align::Center));
                 }
-                // 记录块矩形供下一帧挂交互；被 egui 判给本行的点击 → 游标移动/取消
+                // 记录块矩形供下一帧挂交互
                 ui.ctx().data_mut(|d| d.insert_temp(row_id, block_rect));
-                if row_resp.is_some_and(|r| r.clicked()) {
+                // 点文本：egui 0.31 的 label 默认可选（click_and_drag 传感），文本上的
+                // 点击判给 label 而非行控件——所以除行控件自身 clicked 外，再看本帧
+                // 被点击的控件是否落在本行矩形内（且同属本层面板，上层弹窗排除）；
+                // 拖选文本是 drag 不是 click，不会误触发标记
+                let clicked_widget_in_row = ui
+                    .ctx()
+                    .interaction_snapshot(|s| s.clicked)
+                    .and_then(|id| ui.ctx().read_response(id))
+                    .is_some_and(|r| {
+                        r.layer_id == ui.layer_id() && block_rect.contains(r.rect.center())
+                    });
+                let clicked_here = (row_resp.is_some_and(|r| r.clicked())
+                    || clicked_widget_in_row)
+                    && pre_pending == (pending_open.is_some(), pending_jump.is_some());
+                if clicked_here {
                     pending_toggle = Some(idx);
                 }
             }
