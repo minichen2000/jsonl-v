@@ -259,10 +259,11 @@ impl JsonlApp {
         };
         self.startup_fit = true;
         let want = egui::vec2(1280.0, 800.0);
-        // 竖向多留量：标题栏 ~30 + 任务栏 ~48，再上浮 16 让视觉居中
+        // 竖向多留量：标题栏 ~30 + 任务栏 ~48×2——窗口显示在任务栏上方时
+        // 底边再留一个任务栏高度才不贴底，中心再上浮 16 让视觉居中
         let size = egui::vec2(
             want.x.min(mon.x - 40.0).max(640.0),
-            want.y.min(mon.y - 140.0).max(400.0),
+            want.y.min(mon.y - 188.0).max(400.0),
         );
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         let pos = egui::pos2(

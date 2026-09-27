@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Startup main window height now reserves an extra taskbar's height at the bottom (~48 logical px more), so with the Windows taskbar visible the window no longer hugs the bottom edge
 - Larger default popup sizes: JSON viewer 900x700 → 1100x700, text viewer 700x500 → 1100x680
 - Shortcuts/About dialogs now use the same popup frame (shadow/border) as the viewer windows
 
