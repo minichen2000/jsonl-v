@@ -33,6 +33,8 @@
 
 ## egui 踩坑记录
 
+- **accesskit 崩溃 = 无声闪退**：egui 0.31 的无障碍树 diff 有 bug，UIA 客户端（输入法/读屏/自动化工具）挂着时，窗口 id 变化会触发 `accesskit_consumer` unwrap None panic。本项目已在 Cargo.toml 关掉 eframe 的 `accesskit` 特性（勿改回默认特性）。UI 线程 panic 由 `main.rs::install_panic_hook` 写 `%APPDATA%/jsonl-v/crash.log`。
+- **显示器尺寸用 `ViewportInfo::monitor_size`**，`ctx.screen_rect()` 是窗口自身客户区；主窗口启动居中见 `app.rs::fit_main_window_at_startup`。
 - 拖选文本到滚动区边缘不持续滚动：内置滚动只在选区变化的帧触发且无重绘循环。修法：`app.rs::drag_edge_autoscroll` 在拖选期间每帧按指针超出边缘的距离补滚动量并 `request_repaint`。
 - TextEdit 右键按下会清空选区：见 `app.rs::show_editable_text` 的预垫高亮 + 还原选区处理。
 - `Window::fixed_size` 设的是内容区尺寸：全屏窗口用 `app.rs::maximized_pos_size` 扣减标题栏与边框。
