@@ -1713,6 +1713,9 @@ impl JsonlApp {
                     egui::pos2(clip.left(), block_top),
                     egui::pos2(clip.right(), ui.cursor().top()),
                 );
+                // 点击判定用视口内部分：滚出视口的行其矩形会伸到工具栏区域，
+                // 不裁剪的话点搜索框会被误判成点那一行
+                let block_hit_rect = block_rect.intersect(clip);
                 // 阅读游标行底色优先；当前命中所在条目给淡底色
                 if cursor == Some(idx) {
                     ui.painter().set(
@@ -1739,7 +1742,7 @@ impl JsonlApp {
                     .interaction_snapshot(|s| s.clicked)
                     .and_then(|id| ui.ctx().read_response(id))
                     .is_some_and(|r| {
-                        r.layer_id == ui.layer_id() && block_rect.contains(r.rect.center())
+                        r.layer_id == ui.layer_id() && block_hit_rect.contains(r.rect.center())
                     });
                 let clicked_here = (row_resp.is_some_and(|r| r.clicked())
                     || clicked_widget_in_row)
