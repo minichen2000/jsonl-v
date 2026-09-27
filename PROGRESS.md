@@ -16,10 +16,11 @@
 
 ## 待办
 
-- 暂无（本次「弹窗加大 + 拖选边缘持续滚动」已完成）
+- 「请求体JSON 窗点全屏有几率卡死退出」：无头测试（直接切换 + 真实点击模拟）均未复现，渲染/事件路径正常。已加 panic 钩子写 `%APPDATA%/jsonl-v/crash.log`，待用户复现后取日志定位；若日志为空则可能是栈溢出（abort，钩子捕不到）或 Windows 强杀
 
 ## 已知坑 / 注意事项
 
+- **显示器尺寸 ≠ `ctx.screen_rect()`**：后者是窗口自身客户区；显示器逻辑尺寸用 `ctx.input(|i| i.viewport().monitor_size)`，头一两帧可能是 None。主窗口启动尺寸/居中修正见 `app.rs::fit_main_window_at_startup`。
 - **eframe 跨会话持久化窗口位置/尺寸**：egui 按窗口 id 记忆，旧的记忆会盖掉 `default_size`/`default_pos`。想让新的默认生效必须换 id 盐（如 `json_view_v2`）重置记忆。
 - **egui 拖选到滚动区边缘不持续滚动**：内置 `scroll_to_rect` 只在选区变化的帧触发且无重绘循环，指针停在边缘即停。已在 `app.rs::drag_edge_autoscroll` 每帧补滚动量 + `request_repaint` 解决。
 - **egui TextEdit 右键按下会清空选区**（`any_pressed` 判定）：`show_editable_text` 里用上一帧缓存 galley 预垫高亮 + 事后还原选区防闪烁，改动该区域代码前先读懂注释。

@@ -141,6 +141,8 @@ pub struct JsonlApp {
     // 树视图全展开/全折叠
     tree_default_open: Option<bool>,
     tree_gen: u64,
+    // 启动时主窗口尺寸/位置修正（一次性）
+    startup_fit: bool,
 }
 
 impl JsonlApp {
@@ -179,6 +181,7 @@ impl JsonlApp {
             detail_cache: None,
             tree_default_open: None,
             tree_gen: 0,
+            startup_fit: false,
         };
         if let Some(p) = initial_path {
             app.open_path(p);
@@ -226,6 +229,33 @@ impl JsonlApp {
             .text_styles
             .insert(Heading, FontId::new(fs + 4.0, FontFamily::Proportional));
         ctx.set_style(style);
+    }
+
+    /// 启动时把主窗口按显示器逻辑尺寸收紧并居中（略偏上），一次性。
+    /// 默认 1280x800 是逻辑尺寸：1080p 屏 125%/150% 缩放时逻辑高只有 864/720，
+    /// 加标题栏与任务栏后底边会出屏。注意 `ctx.screen_rect()` 是窗口自身客户区，
+    /// 显示器尺寸要用 `ViewportInfo::monitor_size`（头一两帧可能还没就绪）。
+    fn fit_main_window_at_startup(&mut self, ctx: &Context) {
+        if self.startup_fit {
+            return;
+        }
+        let Some(mon) = ctx.input(|i| i.viewport().monitor_size) else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return;
+        };
+        self.startup_fit = true;
+        let want = egui::vec2(1280.0, 800.0);
+        // 竖向多留量：标题栏 ~30 + 任务栏 ~48，再上浮 16 让视觉居中
+        let size = egui::vec2(
+            want.x.min(mon.x - 40.0).max(640.0),
+            want.y.min(mon.y - 140.0).max(400.0),
+        );
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        let pos = egui::pos2(
+            ((mon.x - size.x) / 2.0).max(0.0),
+            ((mon.y - size.y) / 2.0 - 16.0).max(0.0),
+        );
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
     }
 
     fn open_path(&mut self, path: PathBuf) {
@@ -1548,6 +1578,7 @@ impl eframe::App for JsonlApp {
             egui::Theme::Light
         });
         self.apply_font_size(ctx);
+        self.fit_main_window_at_startup(ctx);
 
         // 拖放打开文件
         let dropped: Vec<PathBuf> = ctx.input(|i| {

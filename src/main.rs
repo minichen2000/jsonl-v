@@ -18,6 +18,7 @@ use std::sync::Arc;
 use app::JsonlApp;
 
 fn main() -> eframe::Result<()> {
+    install_panic_hook();
     let initial_path = std::env::args().nth(1).map(PathBuf::from);
     let mut options = eframe::NativeOptions::default();
     options.viewport = egui::ViewportBuilder::default()
@@ -37,6 +38,34 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(JsonlApp::new(initial_path)))
         }),
     )
+}
+
+/// windows_subsystem = "windows" 下没有控制台，UI 线程 panic 会无声消失。
+/// 装一个钩子把 panic 信息 + backtrace 追加到配置目录的 crash.log，
+/// 便于事后排查「卡死/闪退」类问题（注意：栈溢出是 abort，钩子捕不到）。
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let record = format!("=== panic at unix {secs} ===\n{info}\n{backtrace}\n");
+        let path = crate::settings::config_path()
+            .parent()
+            .map(|d| d.join("crash.log"));
+        if let Some(path) = path {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = f.write_all(record.as_bytes());
+            }
+        }
+        eprintln!("{record}");
+    }));
 }
 
 /// 字体装配：

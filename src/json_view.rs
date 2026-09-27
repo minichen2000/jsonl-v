@@ -144,3 +144,172 @@ impl JsonViewWindow {
         action
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_frames(
+        win: &mut JsonViewWindow,
+        ctx: &egui::Context,
+        frames: usize,
+        start: usize,
+        t: &crate::lang::T,
+    ) {
+        for i in start..start + frames {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1920.0, 1080.0),
+                )),
+                time: Some(i as f64 / 60.0),
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                win.show(ctx, 14.0, t);
+            });
+        }
+    }
+
+    fn sample_request_body() -> serde_json::Value {
+        let long_text = "abcdefghij 一二三四五六七八九十".repeat(200);
+        let mut messages = Vec::new();
+        for i in 0..20 {
+            messages.push(serde_json::json!({
+                "role": if i % 2 == 0 { "user" } else { "assistant" },
+                "content": [
+                    {"type": "text", "text": long_text},
+                    {"type": "tool_use", "id": format!("toolu_{i}"), "input": {"cmd": "ls", "args": [1, 2, 3, true, null]}},
+                ],
+            }));
+        }
+        serde_json::json!({
+            "model": "test-model",
+            "max_tokens": 8192,
+            "system": [{"type": "text", "text": long_text}],
+            "messages": messages,
+            "tools": [{"name": "bash", "description": "run cmd", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}],
+        })
+    }
+
+    /// 复现「点全屏后有几率卡死退出」：普通/全屏/还原 + 树/Pretty 两种模式反复切换渲染
+    #[test]
+    fn maximize_toggle_renders_fine() {
+        let ctx = egui::Context::default();
+        let t = crate::lang::tr(crate::lang::Lang::Zh);
+        let mut win = JsonViewWindow::new(0, "line 1 · request".into(), sample_request_body());
+        let mut frame = 0;
+        for view in [JsonViewMode::Tree, JsonViewMode::Pretty] {
+            win.view = view;
+            run_frames(&mut win, &ctx, 3, frame, t);
+            frame += 3;
+            for _ in 0..5 {
+                win.maximized = true;
+                run_frames(&mut win, &ctx, 3, frame, t);
+                frame += 3;
+                win.maximized = false;
+                run_frames(&mut win, &ctx, 3, frame, t);
+                frame += 3;
+            }
+        }
+    }
+
+    fn run_frame_with_events(
+        win: &mut JsonViewWindow,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        frame: usize,
+        t: &crate::lang::T,
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1920.0, 1080.0),
+            )),
+            time: Some(frame as f64 / 60.0),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            win.show(ctx, 14.0, t);
+        });
+    }
+
+    fn click_at(
+        win: &mut JsonViewWindow,
+        ctx: &egui::Context,
+        pos: egui::Pos2,
+        frame: &mut usize,
+        t: &crate::lang::T,
+    ) {
+        run_frame_with_events(win, ctx, vec![egui::Event::PointerMoved(pos)], *frame, t);
+        *frame += 1;
+        let btn = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run_frame_with_events(win, ctx, vec![btn(true)], *frame, t);
+        *frame += 1;
+        run_frame_with_events(win, ctx, vec![btn(false)], *frame, t);
+        *frame += 1;
+    }
+
+    /// 用真实指针事件点「最大化」「还原」按钮：覆盖点击事件处理路径
+    #[test]
+    fn maximize_button_click_renders_fine() {
+        let ctx = egui::Context::default();
+        let t = crate::lang::tr(crate::lang::Lang::Zh);
+        let mut win = JsonViewWindow::new(0, "line 1 · request".into(), sample_request_body());
+        let mut frame = 0;
+        run_frames(&mut win, &ctx, 3, frame, t);
+        frame += 3;
+
+        // 「最大化」在工具行右端；标题栏（含关闭按钮）在顶部 ~32px 内，扫描时避开
+        let click_toggle = |win: &mut JsonViewWindow,
+                            win_id: egui::Id,
+                            frame: &mut usize,
+                            want: bool,
+                            ctx: &egui::Context,
+                            t: &crate::lang::T| {
+            let rect = ctx
+                .memory(|m| m.area_rect(win_id))
+                .expect("window area should exist");
+            for dy in [42.0, 50.0, 58.0] {
+                let mut dx = 40.0_f32;
+                while dx < rect.width() - 40.0 {
+                    click_at(win, ctx, egui::pos2(rect.right() - dx, rect.top() + dy), frame, t);
+                    if win.maximized == want {
+                        return;
+                    }
+                    dx += 15.0;
+                }
+            }
+            panic!("toggle button not found (want maximized={want})");
+        };
+
+        click_toggle(
+            &mut win,
+            egui::Id::new(("json_view_v2", 0)),
+            &mut frame,
+            true,
+            &ctx,
+            t,
+        );
+        assert!(win.maximized);
+        run_frames(&mut win, &ctx, 10, frame, t);
+        frame += 10;
+
+        click_toggle(
+            &mut win,
+            egui::Id::new(("json_view_max", 0)),
+            &mut frame,
+            false,
+            &ctx,
+            t,
+        );
+        assert!(!win.maximized);
+        run_frames(&mut win, &ctx, 10, frame, t);
+    }
+}
