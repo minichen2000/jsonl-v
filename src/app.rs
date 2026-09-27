@@ -1811,7 +1811,42 @@ pub fn show_editable_text(
         )
     });
     text_edit_copy_menu(&resp, &ctx, edit_id, text, t);
+    drag_edge_autoscroll(ui, &ctx, edit_id);
     resp
+}
+
+/// 拖选文本时指针压到滚动区边缘要持续自动滚动。
+/// egui 内置只在选区变化的帧滚一次（text_edit/builder.rs 的 scroll_to_rect），
+/// 指针停在边缘不动时选区不再变化、滚动就停了；这里每帧按指针超出边缘的
+/// 距离补滚动量，并 request_repaint 维持滚动循环，鼠标按住不动也会一直滚。
+fn drag_edge_autoscroll(ui: &Ui, ctx: &egui::Context, edit_id: egui::Id) {
+    if !ctx.is_being_dragged(edit_id) {
+        return;
+    }
+    let Some(pointer) = ctx.pointer_interact_pos() else {
+        return;
+    };
+    let clip = ui.clip_rect(); // 所在 ScrollArea 的可见区域
+    const EDGE: f32 = 24.0; // 边缘感应区宽度
+    // 基础速度 + 随超出距离加速，封顶防飞
+    let speed = |overshoot: f32| 4.0 + overshoot.min(200.0) * 0.15;
+    let mut delta = egui::Vec2::ZERO;
+    if pointer.y > clip.bottom() - EDGE {
+        delta.y = speed(pointer.y - (clip.bottom() - EDGE));
+    } else if pointer.y < clip.top() + EDGE {
+        delta.y = -speed((clip.top() + EDGE) - pointer.y);
+    }
+    if pointer.x > clip.right() - EDGE {
+        delta.x = speed(pointer.x - (clip.right() - EDGE));
+    } else if pointer.x < clip.left() + EDGE {
+        delta.x = -speed((clip.left() + EDGE) - pointer.x);
+    }
+    if delta != egui::Vec2::ZERO {
+        // 让「可见区域平移 delta」后的矩形可见：最小滚动量正好是 delta，
+        // 冒泡到父 ScrollArea；滚动后 galley 位置变化，选区随指针延伸
+        ui.scroll_to_rect(clip.translate(delta), None);
+        ctx.request_repaint();
+    }
 }
 
 /// 按 egui 画选区的算法（visuals.rs 的 paint_text_selection）把高亮矩形画到

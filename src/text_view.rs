@@ -57,7 +57,7 @@ impl TextViewWindow {
                 .resizable(false)
                 .collapsible(false)
         } else {
-            win.default_size([700.0, 500.0]).resizable(true)
+            win.default_size([960.0, 680.0]).resizable(true)
         };
         win.show(ctx, |ui| {
             let lines = self.content.lines().count();

@@ -68,7 +68,7 @@ impl JsonViewWindow {
                 .resizable(false)
                 .collapsible(false)
         } else {
-            win.default_size([900.0, 700.0]).resizable(true)
+            win.default_size([1100.0, 800.0]).resizable(true)
         };
         win.show(ctx, |ui| {
             ui.horizontal(|ui| {

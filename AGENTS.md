@@ -20,3 +20,15 @@
 
 - 纯 Rust + egui，单文件 exe
 - Windows 下图标由 `build.rs` 内嵌（`#[cfg(windows)]` 门控；`assets/icon.ico` 缺失时跳过）
+
+## 记录文件维护约定
+
+- `PROGRESS.md`（中文）：进度、待办、已知坑；`CHANGELOG.md`（英文）：按版本记录变更。
+- 每次完成任务或发现新待办/新坑时，同步更新 `PROGRESS.md`；影响用户的改动同步写入 `CHANGELOG.md` 的 Unreleased 段。
+- 架构决策、新依赖、新踩坑同步更新本文件。
+
+## egui 踩坑记录
+
+- 拖选文本到滚动区边缘不持续滚动：内置滚动只在选区变化的帧触发且无重绘循环。修法：`app.rs::drag_edge_autoscroll` 在拖选期间每帧按指针超出边缘的距离补滚动量并 `request_repaint`。
+- TextEdit 右键按下会清空选区：见 `app.rs::show_editable_text` 的预垫高亮 + 还原选区处理。
+- `Window::fixed_size` 设的是内容区尺寸：全屏窗口用 `app.rs::maximized_pos_size` 扣减标题栏与边框。
